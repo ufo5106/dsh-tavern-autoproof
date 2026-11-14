@@ -1,0 +1,6 @@
+﻿proof.log*
+.tavern-entry*
+.tavern-status.json
+*.7z
+*.rar
+node_modules/
