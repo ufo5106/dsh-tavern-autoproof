@@ -10,6 +10,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  SETTINGS_SCHEMA,
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+  normalizeQuotes,
+  scanWebNovelAiTells,
+  analyzeLocalNovelHealth,
+  isSensitiveNsfwSegment,
+  isDialogueProtectedParagraph,
+  validateTier2Rewrite,
+} from './lib/local-rules.mjs'
 
 export const name = 'dsh-tavern-autoproof'
 export const inject = { tavern: { required: true }, llm: { required: false } }
@@ -1378,18 +1389,18 @@ export function analyze(text, customLimits = {}) {
 
 // ---- 模型局部校對系統提示詞（從「禁止句型」升級為「修正敘事習慣、保留角色靈魂」） ----
 
-export function buildRewriteSystem(toScript = 'trad', styleGuide = '') {
+export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aestheticMode = 'deep') {
   const scriptRule = toScript === 'simp'
     ? '5. 語文純淨度：統一使用簡體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
     : '5. 語文純淨度：統一使用繁體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
   const parts = [
-    '你是中文小說的局部文體編輯（AutoProof v1.29）。你的職責是像專業小說責編一樣修正被指出的「機械化敘事習慣」，而不是替作者重寫小說，也不是把文章改得更華麗。',
+    '你是中文小說的局部文體編輯（AutoProof v1.31）。你的職責是像專業小說責編一樣修正被指出的「機械化敘事習慣」，而不是替作者重寫小說，也不是把文章改得更華麗。',
     '請先判斷候選是否真的構成模板化、頂真拆解或語義冗餘；若它在當前人物、場景、語氣中自然且有表達作用，原文照抄，不要為了「去 AI 味」硬改。',
     '',
     '【最高優先級：最小改動與正面保護】',
     '- 只改本段中確實有問題的局部；沒有問題就原樣返回。不得主動掃蕩其他句式，不得把普通敘述改成另一種 AI 文風。',
     '- 保留人物對話的辨識度與性格張力（角色語氣、留白、反問與互動節奏）。',
-    '- 保留有效的懸疑短句與節奏定格，絕不強行合併短句。',
+    '- 保留有效的懸疑短句與節奏定格，絕不強行合併短句，也不要把自然的逗號長句硬拆成電報體短句串。',
     '- 保留所有具有劇情推進與伏筆作用的場景細節與道具線索。',
     '- 不得新增、刪除或改變事件、人物意圖、因果、情緒、動作結果、物件、數量、身體部位、時間、空間及設定。',
     '',
@@ -1402,6 +1413,15 @@ export function buildRewriteSystem(toScript = 'trad', styleGuide = '') {
     '4. 畫面重複拆解：如「往上飄→被拽住→墜下來→再飄上去」這類反覆描述同一物理現象的句子，收斂為精煉且保留畫面的描述。',
     scriptRule,
   ]
+  if (aestheticMode === 'deep') {
+    parts.push(
+      '',
+      '【進階小說美學紀律（deai / sepia 精編原則）】',
+      '6. 替換不複用：同一種模板詞（如「眼神」「嘴角」「點頭」）在段內重複命中時，各處須改用不同具體動作或細節，嚴禁全部統一換成「垂下眼」或每個動作都墊「了一下」製造新指紋。',
+      '7. 動作後少解釋一句：若前文的動作、物件或原話已經把情緒寫出來，直接刪掉後面的情緒註解（例如「他把門打開又關上」後面不必補「他猶豫了」）。',
+      '8. 停早一拍、刪減升華：段尾若出現「這一刻」「他終於明白」「原來所謂…」等說教或強行總結句，優先刪剪並停在最後一個具體動作、畫面或對話上。',
+    )
+  }
   if (styleGuide) {
     parts.push('', '【本卡文風基準（優先參照）】', styleGuide)
   }
@@ -1586,18 +1606,30 @@ export function apply(ctx) {
   const cardSpecCache = new Map() // gameId -> { script, limits, styleGuide }
   // 保留最近 6～10 輪的「候選類型」計數，不保存正文；用於辨識跨輪次的固定套路
   const styleHistory = new Map() // gameId -> Array<{ turn, keys }>
-  let styleHistoryLoaded = false
+  const settingsByGame = new Map() // gameId -> granular settings override
+  let globalSettings = null
+  let pluginDataLoaded = false
 
   async function ensureStyleHistoryLoaded() {
-    if (styleHistoryLoaded) return
-    styleHistoryLoaded = true
+    if (pluginDataLoaded) return
+    pluginDataLoaded = true
     if (typeof ctx.tavern.readPluginData !== 'function') return
     try {
       const saved = await ctx.tavern.readPluginData()
-      const map = saved && typeof saved === 'object' ? saved.styleHistory : null
-      if (map && typeof map === 'object') {
-        for (const [gid, arr] of Object.entries(map)) {
-          if (Array.isArray(arr) && !styleHistory.has(gid)) styleHistory.set(gid, arr)
+      if (saved && typeof saved === 'object') {
+        const map = saved.styleHistory
+        if (map && typeof map === 'object') {
+          for (const [gid, arr] of Object.entries(map)) {
+            if (Array.isArray(arr) && !styleHistory.has(gid)) styleHistory.set(gid, arr)
+          }
+        }
+        if (saved.globalSettings && typeof saved.globalSettings === 'object') {
+          globalSettings = normalizeSettings(saved.globalSettings)
+        }
+        if (saved.settingsByGame && typeof saved.settingsByGame === 'object') {
+          for (const [gid, cfg] of Object.entries(saved.settingsByGame)) {
+            if (cfg && typeof cfg === 'object') settingsByGame.set(gid, normalizeSettings(cfg))
+          }
         }
       }
     } catch {
@@ -1612,10 +1644,29 @@ export function apply(ctx) {
       for (const [gid, arr] of styleHistory.entries()) {
         if (Array.isArray(arr) && arr.length) out[gid] = arr
       }
-      ctx.tavern.savePluginData({ data: { styleHistory: out } }).catch(() => {})
+      const perGame = {}
+      for (const [gid, cfg] of settingsByGame.entries()) {
+        if (cfg && typeof cfg === 'object') perGame[gid] = cfg
+      }
+      ctx.tavern.savePluginData({
+        data: {
+          styleHistory: out,
+          globalSettings,
+          settingsByGame: perGame,
+        },
+      }).catch(() => {})
     } catch {
       // ignore
     }
+  }
+
+  async function getEffectiveSettings(gameId) {
+    await ensureStyleHistoryLoaded()
+    const hostCfg = (await ctx.tavern.getGameSettings?.({ gameId }).catch(() => null)) || {}
+    const base = { ...DEFAULT_SETTINGS, ...hostCfg }
+    if (globalSettings) Object.assign(base, globalSettings)
+    if (gameId && settingsByGame.has(gameId)) Object.assign(base, settingsByGame.get(gameId))
+    return normalizeSettings(base)
   }
 
   async function getCardSpec(gameId) {
@@ -1656,9 +1707,21 @@ export function apply(ctx) {
   }
 
   ctx.tavern.gameSettings({
-    title: '自動校對 v1.29',
+    title: '自動校對 v1.31',
     fields: [
       { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。', default: true },
+      {
+        key: 'nsfwRouting',
+        type: 'select',
+        label: 'NSFW 安全分流',
+        description: '智能分流：含露骨詞彙段落留本地處理，其餘安全段進 Tier 2；全篇純本地則完全不走雲端。',
+        options: [
+          { value: 'bypass_local', label: '智能分流（推薦）' },
+          { value: 'local_only', label: '全篇純本地（0 Token）' },
+          { value: 'send_all', label: '全部送交 Tier 2' },
+        ],
+        default: 'bypass_local',
+      },
       { key: 'tier2', type: 'boolean', label: '候選段落模型／局部校對', description: '僅將命中敘事結構候選的段落送交校對；未命中段落與優秀短句逐字保留。', default: true },
       {
         key: 'mode',
@@ -1673,6 +1736,18 @@ export function apply(ctx) {
         default: 'standard',
       },
       {
+        key: 'charFixMode',
+        type: 'select',
+        label: '字級修復檔位',
+        description: '關閉／僅簡繁錯字／完整（含英文殘留與漏字修復）。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'chars_only', label: '僅修簡繁錯字' },
+          { value: 'full', label: '完整修復（推薦）' },
+        ],
+        default: 'full',
+      },
+      {
         key: 'script',
         type: 'select',
         label: '輸出字形',
@@ -1684,8 +1759,71 @@ export function apply(ctx) {
         ],
         default: 'auto',
       },
+      {
+        key: 'quoteNormalize',
+        type: 'select',
+        label: '雙向引號規範',
+        description: '自動統一繁體直角引號「」『』或簡體彎引號“”‘’。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'auto', label: '跟隨字形（推薦）' },
+          { value: 'trad_corner', label: '強制「」『』' },
+          { value: 'simp_curly', label: '強制“”‘’' },
+        ],
+        default: 'auto',
+      },
+      {
+        key: 'aiLexiconLevel',
+        type: 'select',
+        label: '網文 AI 模板詞密度',
+        description: '純本地 0 Token 偵測網文套話與弱化副詞千字密度。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'report', label: '僅報告標記' },
+          { value: 'strict', label: '嚴格（>2.0/千字）' },
+          { value: 'balanced', label: '平衡（>3.0/千字）' },
+          { value: 'relaxed', label: '寬鬆（>5.0/千字）' },
+        ],
+        default: 'balanced',
+      },
+      {
+        key: 'localRhythmAudit',
+        type: 'select',
+        label: '本地節奏與六感體檢',
+        description: '純本地偵測段落節奏 CV、結尾升華腔、公式轉折與六感平衡。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'basic', label: '基礎（節奏＋升華尾句）' },
+          { value: 'full', label: '完整（含六感＋撞場）' },
+        ],
+        default: 'full',
+      },
+      { key: 'protectDialogue', type: 'boolean', label: '對話與口癖保護區', description: '保護純對白與引號內角色口癖，避免被 Tier 2 改平。', default: true },
+      {
+        key: 'hallucinationGuard',
+        type: 'select',
+        label: '改寫後本地防幻覺守門',
+        description: '純本地核對中/阿數字等價與長度，嚴格檔禁止引入新 AI 詞。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'standard', label: '標準（數字＋長度）' },
+          { value: 'strict', label: '嚴格（含禁新 AI 詞）' },
+        ],
+        default: 'strict',
+      },
+      {
+        key: 'aestheticPrompt',
+        type: 'select',
+        label: '小說美學編修紀律',
+        description: '深度美學含「替換不複用」「動作後少解釋一句」「停早一拍」。',
+        options: [
+          { value: 'standard', label: '標準紀律' },
+          { value: 'deep', label: '深度美學（推薦）' },
+        ],
+        default: 'deep',
+      },
       { key: 'preHint', type: 'boolean', label: '跨輪次生成前輕量提醒', description: '當最近多輪重複出現同一八股或懸念模板時，於下一輪注入簡短敘事習慣提醒。', default: true },
-      { key: 'historyWindow', type: 'number', label: '跨輪次記憶輪數', description: '追蹤最近幾輪的敘事習慣（建議 6～10 輪）。', min: 6, max: 10, default: 8 },
+      { key: 'historyWindow', type: 'number', label: '跨輪次記憶輪數', description: '追蹤最近幾輪的敘事習慣（建議 6～10 輪）。', min: 4, max: 12, default: 8 },
       { key: 'dashLimit', type: 'number', label: '破折號觀察上限（引號外）', description: '僅作報告觀察值，不會單獨觸發改寫。', min: 0, max: 20, step: 0.5, default: 2.0 },
       { key: 'shortParaLimit', type: 'number', label: '孤立短段觀察上限', description: '僅作報告觀察值，有效懸疑短句自動豁免。', min: 1, max: 30, default: 8 },
       { key: 'dunhaoLimit', type: 'number', label: '頓號三連觀察上限', description: '僅作報告觀察值，不會單獨觸發改寫。', min: 0, max: 20, default: 2 },
@@ -1700,8 +1838,7 @@ export function apply(ctx) {
       position: 'after',
       async text({ gameId }) {
         try {
-          await ensureStyleHistoryLoaded()
-          const cfg = (await ctx.tavern.getGameSettings?.({ gameId })) || {}
+          const cfg = await getEffectiveSettings(gameId)
           if (cfg.enabled === false || cfg.preHint === false) return ''
           const history = styleHistory.get(gameId) || []
           if (history.length < 3) return ''
@@ -1722,8 +1859,7 @@ export function apply(ctx) {
 
     const job = (async () => {
       try {
-        await ensureStyleHistoryLoaded()
-        const cfg = (await ctx.tavern.getGameSettings?.({ gameId })) || {}
+        const cfg = await getEffectiveSettings(gameId)
         if (!force && cfg.enabled === false) return null
 
         let currentRaw = rawText
@@ -1763,18 +1899,30 @@ export function apply(ctx) {
         const effectiveLimits = cardSpec.limits ? { ...cfg, ...cardSpec.limits } : cfg
         const segs = splitSegments(currentRaw)
 
-        // Tier 1：對所有非 HTML/非程式碼區塊段落執行簡繁、英文殘留與固定漏字修復
+        // Tier 1：依字級修復檔位 + 雙向引號規範，對所有非 HTML/非程式碼區塊段落執行純本地修復
+        const charFixMode = cfg.charFixMode || 'full'
+        const quoteTarget = cfg.quoteNormalize === 'auto'
+          ? (toScript === 'simp' ? 'simp_curly' : 'trad_corner')
+          : (cfg.quoteNormalize || 'auto')
         const charFixMap = new Map()
         let tier1Total = 0
+        let quoteConverted = 0
         for (const seg of segs) {
           if (seg.type !== 'text') continue
-          const res = applyCharFixes(seg.content, { enablePhrases: true, toScript })
-          seg.content = res.text
-          tier1Total += res.total
-          for (const f of res.fixes) {
-            const prev = charFixMap.get(f.from)
-            if (prev) prev.count += f.count
-            else charFixMap.set(f.from, { ...f })
+          if (charFixMode !== 'off') {
+            const res = applyCharFixes(seg.content, { enablePhrases: charFixMode === 'full', toScript })
+            seg.content = res.text
+            tier1Total += res.total
+            for (const f of res.fixes) {
+              const prev = charFixMap.get(f.from)
+              if (prev) prev.count += f.count
+              else charFixMap.set(f.from, { ...f })
+            }
+          }
+          if (quoteTarget && quoteTarget !== 'off') {
+            const qRes = normalizeQuotes(seg.content, quoteTarget)
+            seg.content = qRes.text
+            quoteConverted += qRes.converted
           }
         }
         const tier1Fixes = Array.from(charFixMap.values())
@@ -1789,6 +1937,20 @@ export function apply(ctx) {
           rawStyleKeys.push('soft_dialogue_stage')
         }
 
+        // 純本地網文 AI 模板詞密度 & 節奏／升華尾句／六感平衡體檢（0 Token）
+        const lexiconAudit = scanWebNovelAiTells(visible, cfg.aiLexiconLevel || 'balanced')
+        const rhythmAudit = analyzeLocalNovelHealth(visible, cfg.localRhythmAudit || 'full')
+        if (lexiconAudit.triggered && cfg.aiLexiconLevel !== 'off') {
+          for (const w of lexiconAudit.warnings) {
+            violations.push({ key: 'local_webnovel_lexicon', label: w })
+          }
+        }
+        if (rhythmAudit.enabled) {
+          for (const w of rhythmAudit.warnings) {
+            violations.push({ key: 'local_rhythm_health', label: w })
+          }
+        }
+
         const recurringStyleKeys = trackStyleHistory(gameId, turn, rawStyleKeys, windowSize)
         const semantic = semanticHits(visible, recurringStyleKeys, { mode })
         for (const s of semantic) {
@@ -1801,27 +1963,69 @@ export function apply(ctx) {
           turn,
           textVersion: currentVersion,
           mode,
+          nsfwRouting: cfg.nsfwRouting || 'bypass_local',
           edited: false,
           charFixes: tier1Fixes,
+          quoteConverted,
           metrics,
           narrative,
+          localAudit: {
+            lexicon: lexiconAudit,
+            rhythm: rhythmAudit,
+          },
           violations,
           limits,
           rewriteCandidates: semantic.length,
           recurringStyleKeys,
           targetSegments: 0,
-          tier2: { ran: false, ok: false, segments: 0, error: '' },
+          nsfwBypassedCount: 0,
+          dialogueProtectedCount: 0,
+          tier2: { ran: false, ok: false, segments: 0, error: '', guardRejected: 0 },
         }
 
-        const tier2On = cfg.tier2 !== false
+        const tier2On = cfg.tier2 !== false && cfg.nsfwRouting !== 'local_only'
         const narrativeOk = hanzi(visible) >= 20
-        const rewriteNeeded = semantic.length > 0 || Boolean(scriptViolation)
+        const lexiconNeedsRewrite = lexiconAudit.triggered
+          && cfg.aiLexiconLevel !== 'off'
+          && cfg.aiLexiconLevel !== 'report'
+        const rewriteNeeded = semantic.length > 0 || lexiconNeedsRewrite || Boolean(scriptViolation)
 
-        if (rewriteNeeded && tier2On && narrativeOk) {
-          const numbered = numberedSegments(segs, Boolean(scriptViolation), semantic.map(x => x.key), {
+        if (rewriteNeeded && narrativeOk) {
+          const allNumbered = numberedSegments(segs, Boolean(scriptViolation), semantic.map(x => x.key), {
             mode,
             maxSegments: cardSpec.limits?.maxSegments,
           })
+
+          // NSFW 安全分流 + 對話保護區過濾
+          const safeNumbered = []
+          const localOnlyNumbered = []
+          for (const seg of allNumbered) {
+            if (cfg.protectDialogue !== false && isDialogueProtectedParagraph(seg.content)) {
+              report.dialogueProtectedCount += 1
+              continue
+            }
+            if (cfg.nsfwRouting === 'bypass_local' && isSensitiveNsfwSegment(seg.content)) {
+              report.nsfwBypassedCount += 1
+              localOnlyNumbered.push(seg)
+              continue
+            }
+            safeNumbered.push(seg)
+          }
+
+          // 留守本地的 NSFW 段落先跑純本地確定性微修
+          for (const seg of localOnlyNumbered) {
+            const polished = surgicalPolishParagraph(seg.content, mode)
+            if (polished !== seg.content) seg.rewrite = polished
+          }
+
+          const numbered = tier2On ? safeNumbered : []
+          if (!tier2On) {
+            for (const seg of safeNumbered) {
+              const polished = surgicalPolishParagraph(seg.content, mode)
+              if (polished !== seg.content) seg.rewrite = polished
+            }
+          }
+
           report.tier2.segments = numbered.length
           report.targetSegments = numbered.length
 
@@ -1837,7 +2041,7 @@ export function apply(ctx) {
               const verSignal = (currentVersion && typeof ctx.tavern.versionSignal === 'function')
                 ? await ctx.tavern.versionSignal({ gameId, turn, textVersion: currentVersion }).catch(() => null)
                 : null
-              const rewriteSystem = buildRewriteSystem(toScript, cardSpec.styleGuide)
+              const rewriteSystem = buildRewriteSystem(toScript, cardSpec.styleGuide, cfg.aestheticPrompt || 'deep')
 
               // v1.29b：一段一請求（並發 3），直接聚焦該段命中的候選類型，避免整輪 11 項候選分散注意力
               const buildPrompt = (seg) => {
@@ -1856,9 +2060,9 @@ export function apply(ctx) {
                 ].filter(Boolean).join('\n\n')
               }
 
+              const guardLevel = cfg.hallucinationGuard || 'strict'
               const rewriteOne = async (seg) => {
                 if (verSignal?.aborted) throw verSignal.reason || new Error('stale-version')
-                const before = hanzi(seg.content)
                 const out = await callHostModel({
                   llm,
                   provider: bgModel.provider,
@@ -1871,10 +2075,13 @@ export function apply(ctx) {
                   timeoutMs: 120000,
                 })
                 const text = cleanModelText(out)
-                if (!text) return null
-                const after = hanzi(text)
-                if (before >= 20 && after < before * 0.5) return null   // 疑似截斷／被刪空
-                if (before >= 20 && after > before * 1.6) return null   // 疑似擴寫
+                const check = validateTier2Rewrite(seg.content, text, guardLevel)
+                if (!check.ok) {
+                  if (check.reason && check.reason !== 'empty') {
+                    report.tier2.guardRejected = (report.tier2.guardRejected || 0) + 1
+                  }
+                  return null
+                }
                 return text
               }
 
@@ -2128,6 +2335,44 @@ export function apply(ctx) {
     return { ok: true, edited: Boolean(report?.edited) }
   })
 
+  ctx.tavern.handle('dsh-tavern-autoproof/get-settings', async ({ gameId } = {}) => {
+    const settings = await getEffectiveSettings(gameId)
+    return {
+      schema: SETTINGS_SCHEMA,
+      settings,
+      hasGameOverride: Boolean(gameId && settingsByGame.has(gameId)),
+      hasGlobalOverride: Boolean(globalSettings),
+    }
+  })
+
+  ctx.tavern.handle('dsh-tavern-autoproof/save-settings', async ({ gameId, settings = {}, scope = 'game' } = {}) => {
+    await ensureStyleHistoryLoaded()
+    const normalized = normalizeSettings(settings)
+    if (scope === 'global') {
+      globalSettings = normalized
+    } else if (gameId) {
+      settingsByGame.set(gameId, normalized)
+    } else {
+      globalSettings = normalized
+    }
+    persistStyleHistory()
+    const effective = await getEffectiveSettings(gameId)
+    return { ok: true, settings: effective }
+  })
+
+  ctx.tavern.handle('dsh-tavern-autoproof/reset-settings', async ({ gameId, scope = 'game' } = {}) => {
+    await ensureStyleHistoryLoaded()
+    if (scope === 'global') {
+      globalSettings = null
+      if (gameId) settingsByGame.delete(gameId)
+    } else if (gameId) {
+      settingsByGame.delete(gameId)
+    }
+    persistStyleHistory()
+    const effective = await getEffectiveSettings(gameId)
+    return { ok: true, settings: effective }
+  })
+
   ctx.tavern.handle('dsh-tavern-autoproof/clientlog', async (payload = {}) => {
     writeLog({ evt: 'clientlog', ...payload })
     return { ok: true }
@@ -2156,4 +2401,13 @@ export const __test = Object.freeze({
   surgicalPolishParagraph,
   runOfflineProof,
   buildTurnConstraintHint,
+  SETTINGS_SCHEMA,
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+  normalizeQuotes,
+  scanWebNovelAiTells,
+  analyzeLocalNovelHealth,
+  isSensitiveNsfwSegment,
+  isDialogueProtectedParagraph,
+  validateTier2Rewrite,
 })

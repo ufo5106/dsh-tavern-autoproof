@@ -205,3 +205,64 @@ test('v1.30 新增規則：光桿頂真、碎步動作鏈、程度副詞密度�
   const fixed = applyCharFixes('他擰袖口的的水，談起射日之徵。', { toScript: 'trad' })
   assert.equal(fixed.text, '他擰袖口的水，談起射日之征。')
 })
+
+test('v1.31 純本地規則：引號雙向規範、網文模板詞庫、節奏/升華尾句/六感與防幻覺守門', () => {
+  const {
+    normalizeQuotes,
+    scanWebNovelAiTells,
+    analyzeLocalNovelHealth,
+    isSensitiveNsfwSegment,
+    isDialogueProtectedParagraph,
+    validateTier2Rewrite,
+    normalizeSettings,
+  } = __test
+
+  // 1. 雙向引號規範化（繁/簡）
+  const qTrad = normalizeQuotes('他說：“別動，這裡有‘秘密’。”而且他喊了"小心"。', 'trad_corner')
+  assert.equal(qTrad.text, '他說：「別動，這裡有『秘密』。」而且他喊了「小心」。')
+  assert.equal(normalizeQuotes(qTrad.text, 'trad_corner').converted, 0) // 冪等
+  const qSimp = normalizeQuotes('他说：「别动，这里有『秘密』。」', 'simp_curly')
+  assert.equal(qSimp.text, '他说：“别动，这里有‘秘密’。”')
+
+  // 2. 網文模板詞庫與千字密度門檻
+  const lexHit = scanWebNovelAiTells('他嘴角勾起，眼中閃過一絲冷意，不由自主地深吸一口氣。', 'balanced')
+  assert.equal(lexHit.triggered, true)
+  assert.ok(lexHit.t1Count >= 3)
+  // 單次正常使用「微微」在長文中不應觸發弱化副詞過密
+  const longClean = '他推開木門走進院子，桌上放著半碗涼茶。'.repeat(12) + '他微微點頭。'
+  const lexClean = scanWebNovelAiTells(longClean, 'balanced')
+  assert.equal(lexClean.softTriggered, false)
+
+  // 3. 純本地節奏 CV、升華尾句與六感平衡
+  const flatText = [
+    '他站在門前看著夜色裡的燈火和屋簷上的影子。',
+    '她坐在桌邊看著杯子裡的茶葉和窗外飄落的葉子。',
+    '風吹過院子裡的青石板與牆角那棵老樹的枝椏。',
+    '他低下頭看著地面上被拉長的影子與微弱的燈光。',
+    '這一刻，他終於明白命運的齒輪早已悄悄轉動。',
+  ].join('\n')
+  const health = analyzeLocalNovelHealth(flatText, 'full')
+  assert.ok(health.aphorismEndings.length >= 1)
+  assert.ok(health.sensory && health.sensory.counts['視覺'] > 0)
+
+  // 4. NSFW 安全分流與對話保護區
+  assert.equal(isSensitiveNsfwSegment('他的手指撫過她滾燙的乳頭與濕潤的花穴，低聲喘息。'), true)
+  assert.equal(isSensitiveNsfwSegment('他走到窗邊看著遠處的山嵐，把茶杯放回桌上。'), false)
+  assert.equal(isDialogueProtectedParagraph('「喂，別亂動啊你！」'), true)
+  assert.equal(isDialogueProtectedParagraph('他走到門邊把門鎖上，回頭看著桌上那封信。'), false)
+
+  // 5. 防幻覺與數字等價守門員
+  assert.equal(validateTier2Rewrite('他走了三百步，花了二兩銀子。', '他走了300步，花了2兩銀子。', 'strict').ok, true)
+  assert.equal(validateTier2Rewrite('他走了三百步，花了二兩銀子。', '他走了500步，花了2兩銀子。', 'strict').ok, false)
+  assert.equal(
+    validateTier2Rewrite('他點點頭把門關上。', '他嘴角勾起，眼中閃過一絲冷意，心中一動把門關上。', 'strict').reason,
+    'introduced-ai-tells'
+  )
+
+  // 6. 設定檔位正規化 + 深度美學 Prompt
+  const cfg = normalizeSettings({ nsfwRouting: 'invalid_val', aiLexiconLevel: 'strict', historyWindow: 99 })
+  assert.equal(cfg.nsfwRouting, 'bypass_local')
+  assert.equal(cfg.aiLexiconLevel, 'strict')
+  assert.equal(cfg.historyWindow, 12)
+  assert.ok(buildRewriteSystem('trad', '', 'deep').includes('替換不複用'))
+})
