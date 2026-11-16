@@ -399,6 +399,41 @@ export const PHRASE_FIXES = Object.freeze([
   { from: '懷里', to: '懷裡', kind: 'simp_phrase' },
   { from: '這里', to: '這裡', kind: 'simp_phrase' },
   { from: '那里', to: '那裡', kind: 'simp_phrase' },
+  { from: '嘴里', to: '嘴裡', kind: 'simp_phrase' },
+  { from: '喉嚨里', to: '喉嚨裡', kind: 'simp_phrase' },
+  { from: '喉咙里', to: '喉嚨裡', kind: 'simp_phrase' },
+  { from: '里頭', to: '裡頭', kind: 'simp_phrase' },
+  { from: '里头', to: '裡頭', kind: 'simp_phrase' },
+  { from: '房間里', to: '房間裡', kind: 'simp_phrase' },
+  { from: '房间里', to: '房間裡', kind: 'simp_phrase' },
+  { from: '走廊里', to: '走廊裡', kind: 'simp_phrase' },
+  { from: '口袋里', to: '口袋裡', kind: 'simp_phrase' },
+  { from: '被子里', to: '被子裡', kind: 'simp_phrase' },
+  { from: '屏幕里', to: '屏幕裡', kind: 'simp_phrase' },
+  // 「着」在常見動詞／持續體語境（保留「著想、著作」以外的動作詞組）
+  { from: '帶着', to: '帶著', kind: 'simp_phrase' },
+  { from: '带着', to: '帶著', kind: 'simp_phrase' },
+  { from: '壓着', to: '壓著', kind: 'simp_phrase' },
+  { from: '压着', to: '壓著', kind: 'simp_phrase' },
+  { from: '翻着', to: '翻著', kind: 'simp_phrase' },
+  { from: '含着', to: '含著', kind: 'simp_phrase' },
+  { from: '抿着', to: '抿著', kind: 'simp_phrase' },
+  { from: '貼着', to: '貼著', kind: 'simp_phrase' },
+  { from: '贴着', to: '貼著', kind: 'simp_phrase' },
+  { from: '順着', to: '順著', kind: 'simp_phrase' },
+  { from: '顺着', to: '順著', kind: 'simp_phrase' },
+  { from: '頂着', to: '頂著', kind: 'simp_phrase' },
+  { from: '顶着', to: '頂著', kind: 'simp_phrase' },
+  { from: '撐着', to: '撐著', kind: 'simp_phrase' },
+  { from: '撑着', to: '撐著', kind: 'simp_phrase' },
+  { from: '蹭着', to: '蹭著', kind: 'simp_phrase' },
+  { from: '握着', to: '握著', kind: 'simp_phrase' },
+  { from: '看着', to: '看著', kind: 'simp_phrase' },
+  { from: '隨着', to: '隨著', kind: 'simp_phrase' },
+  { from: '随着', to: '隨著', kind: 'simp_phrase' },
+  { from: '配合着', to: '配合著', kind: 'simp_phrase' },
+  { from: '留着', to: '留著', kind: 'simp_phrase' },
+  { from: '咽了一下', to: '嚥了一下', kind: 'simp_phrase' },
   // 「后」在時間／方位語境（保留「太后、皇后、王后」）
   { from: '往后仰', to: '往後仰', kind: 'simp_phrase' },
   { from: '往后退', to: '往後退', kind: 'simp_phrase' },
@@ -1049,25 +1084,25 @@ function buildParagraphGuidance(keys) {
     tips.push('若本段「不是A，而是/是B」僅為解釋性慣性而非關鍵懸念反轉，請改為直接描述B的事實，保留原有空間與物件資訊。')
   }
   if (keys.includes('action_inflation')) {
-    tips.push('此段已確認出現動作頂真接龍（如「垂下來，垂進」「闔上，闔到一半」「一拉，拉完」「扣住…扣得…扣到」），請務必刪去重複動詞並合併為俐落的一步動作，勿原樣照抄。')
+    tips.push('此段出現動作頂真接龍（如「V出來，V進」「站著，站到…」「磨，磨到…」），請刪去重複動詞並合併為俐落的一步動作。')
   }
   if (keys.includes('action_chain')) {
-    tips.push('此段已確認將單一動作拆成三四步微動作排隊，請務必合併為 1～2 個俐落分句，刪去純過渡動作（走到／站住／低頭／抬頭／舉起等），勿原樣照抄。')
+    tips.push('此段將單一動作拆成多步微動作排隊，請合併為 1～2 個俐落分句，刪去純過渡動作（走到／站住／低頭／抬頭／舉起等）。')
   }
   if (keys.includes('reduplication_cluster')) {
-    tips.push('本段連續出現多個「一X一X」量詞疊詞，請保留最有畫面感的一處，其餘一至兩處改為自然敘述（如「層層翻卷」「一道道白痕」），避免節奏機械化。')
+    tips.push('本段連續出現多個「一X一X」量詞疊詞，請保留最有畫面感的一處，其餘改為自然敘述，避免節奏機械化。')
   }
   if (keys.includes('emotion_explanation')) {
     tips.push('動作本身已傳達情緒，請刪去多餘的旁白情緒解說。')
   }
   if (keys.includes('degree_cluster')) {
-    tips.push('本段連續使用「得極／得很／極X」修飾動作，請保留最關鍵一處，其餘改為具體動詞或直接刪去冗餘程度補語。')
+    tips.push('本段連續使用「得極／得很／極X」修飾動作，請保留最關鍵一處，其餘改為具體動詞或刪去冗餘程度補語。')
   }
   if (keys.includes('prep_echo')) {
     tips.push('本段出現方向介詞同向回聲（如「往…，往…」），請合併重複方向詞使句子更緊湊。')
   }
   if (keys.includes('stray_english')) {
-    tips.push('將夾雜在中文敘事裡的英文單詞替換為貼合古風／原著語境的繁體中文詞彙。')
+    tips.push('將夾雜在中文敘事裡的英文單詞替換為貼合當前語境的中文詞彙。')
   }
   return tips.join(' ')
 }
@@ -1399,7 +1434,7 @@ export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aesthetic
     ? '5. 語文純淨度：統一使用簡體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
     : '5. 語文純淨度：統一使用繁體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
   const parts = [
-    '你是中文小說的局部文體編輯（AutoProof v1.31）。你的職責是像專業小說責編一樣修正被指出的「機械化敘事習慣」，而不是替作者重寫小說，也不是把文章改得更華麗。',
+    '你是中文小說的局部文體編輯（AutoProof v1.33）。你的職責是像專業小說責編一樣修正被指出的「機械化敘事習慣」，而不是替作者重寫小說，也不是把文章改得更華麗。',
     '請先判斷候選是否真的構成模板化、頂真拆解或語義冗餘；若它在當前人物、場景、語氣中自然且有表達作用，原文照抄，不要為了「去 AI 味」硬改。',
     '',
     '【最高優先級：最小改動與正面保護】',
@@ -1411,11 +1446,11 @@ export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aesthetic
     '',
     '【核心編修原則：修正敘事習慣而非死板禁詞】',
     '1. 對舉與否定揭示（「不是A，而是/是B」）：避免反覆使用「先否定再揭示」的公式組織資訊。當上下文已能自然呈現事實時，直接正面描述事實即可；只有在真正需要製造關鍵反差、糾正誤解或作為人物台詞強調時，才保留對舉結構。',
-    '2. 動作描寫膨脹與頂真拆解：人物動作只在具有劇情、情緒、人物關係或場景意義時保留。禁止「V出來/下來/上/住，V得/到/完/進…」這類字詞接龍（如「垂下來，垂進」「闔上，闔到一半」「一拉，拉完」「跑進來，跑得…，跑到…」「扣住後領，這回扣得…，扣到…」），直接合併成俐落的一步動作。',
-    '2b. 動作分鏡流水（本條最常被漏改，請務必逐句檢查）：單一人物的連續動作最多保留兩個分句，中間過渡步驟一律砍掉；不得按「走到井口前，蹲下去，一手撐在磚沿上」「接過布，捏在指間翻了個面，舉起來對著燈看撕口」「跑進來，氣喘吁吁，跑到跟前才站住，雙手遞上去」這樣拆成三四個微動作排隊。改法：直接寫「他蹲在井口邊，伸手按住磚沿」「藍曦臣接過那塊布對著燈看撕口」「景儀喘著氣跑進來，把那塊布遞給藍曦臣」。',
-    '2c. 同一段內若兩個人物輪流做同類動作（都低頭、都抬頭、都把袖子往前一壓），只留最具性格的一處，其餘刪去動作、只留對話。',
+    '2. 動作描寫膨脹與頂真拆解：人物動作只在具有劇情、情緒、人物關係或場景意義時保留。禁止「V出來/下來/上/住，V得/到/完/進…」這類字詞接龍（如「站著，站到…」「蹭過，蹭得…」「磨，磨到…」），直接合併成俐落的一步動作。',
+    '2b. 動作分鏡流水：單一人物的連續動作最多保留兩個分句，中間純過渡步驟（走過去／伸出手／拿起來／再放下）一律砍掉，直接寫核心動作與結果。',
+    '2c. 同一段內若兩個人物輪流做同類動作（都低頭、都抬頭、都轉開視線），只留最具性格的一處，其餘刪去動作、只留對話。',
     '3. 疊詞與量詞骨架密度：當同一段落連續堆疊多個「一片一片、一道一道、一條一條、一根一根、一串一串」時，保留畫面感最強的一處，其餘改為自然流暢的敘述，消除刻意維持節奏的機械感。',
-    '4. 畫面重複拆解：如「往上飄→被拽住→墜下來→再飄上去」這類反覆描述同一物理現象的句子，收斂為精煉且保留畫面的描述。',
+    '4. 畫面重複拆解：反覆來回描述同一物理動作的句子，收斂為精煉且保留畫面的描述。',
     scriptRule,
   ]
   if (aestheticMode === 'deep') {

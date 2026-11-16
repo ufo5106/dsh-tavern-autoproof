@@ -325,4 +325,11 @@ test('v1.33 品質強化：精準定位、動態對照範例、Best-of-N 評分�
   assert.equal(s.bestOfN, 'smart_2')
   assert.equal(s.cooldownPool, 'report')
   assert.equal(s.narrativeSteering, 'inject')
+
+  // 7. 簡繁詞組補齊（嘴里/喉嚨里/帶着/壓着）＋ 去除寫死古風人名例句
+  const phraseOut = applyCharFixes('她嘴里含着水，喉嚨里壓着聲音，帶着笑意看過來。', { enablePhrases: true, toScript: 'trad' })
+  assert.equal(phraseOut.text, '她嘴裡含著水，喉嚨裡壓著聲音，帶著笑意看過來。')
+  const sysPrompt = buildRewriteSystem('trad', '', 'deep')
+  assert.equal(sysPrompt.includes('藍曦臣'), false)
+  assert.equal(sysPrompt.includes('景儀'), false)
 })
