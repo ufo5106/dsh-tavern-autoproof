@@ -1558,7 +1558,7 @@ function combineSignals(a, b) {
 
 // v1.21：宿主 llm 服务没有 chat()，必须走 prepareCall + stream。
 // 带超时，避免卡死后 running 锁永不释放；v1.29 綁定 versionSignal，回退／重生成立即中止。
-async function callHostModel({ llm, provider, model, reasoningEffort, system, user, sessionId, signal: externalSignal, timeoutMs = 120000 }) {
+async function callHostModel({ llm, provider, model, reasoningEffort, system, user, sessionId, signal: externalSignal, timeoutMs = 120000, asTool = false }) {
   if (!llm || typeof llm.prepareCall !== 'function') throw new Error('llm 服务不可用（缺 prepareCall）')
   const ctrl = new AbortController()
   const timer = setTimeout(() => { try { ctrl.abort(new Error('model-timeout')) } catch { /* ignore */ } }, Math.max(10000, timeoutMs))
@@ -1569,7 +1569,7 @@ async function callHostModel({ llm, provider, model, reasoningEffort, system, us
     if (reasoningEffort !== undefined) cfg.reasoningEffort = reasoningEffort
     const prepared = await llm.prepareCall(cfg, signal)
     if (signal.aborted) throw signal.reason || new Error('aborted')
-    const stream = prepared.stream(Object.assign({}, prepared.config, {
+    const req = Object.assign({}, prepared.config, {
       system,
       messages: [{
         id: `autoproof-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1579,18 +1579,39 @@ async function callHostModel({ llm, provider, model, reasoningEffort, system, us
       }],
       sessionId,
       signal,
-    }))
+    })
+    if (asTool) {
+      req.tools = [{
+        name: 'submit_proofread',
+        description: '提交校對後的完整段落正文（只放正文，不放說明）。',
+        parameters: { type: 'object', additionalProperties: false, properties: { content: { type: 'string' } }, required: ['content'] },
+      }]
+    }
+    const stream = prepared.stream(req)
     let text = ''
+    let toolArgs = ''
+    let toolBlockArgs = ''
     let failure = null
     for await (const chunk of stream) {
       if (signal.aborted) throw signal.reason || new Error('aborted')
       if (chunk.type === 'text-delta') text += chunk.text
-      else if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind !== 'stop') failure = chunk.reason
+      else if (chunk.type === 'tool-call-delta' && typeof chunk.argumentsDelta === 'string') toolArgs += chunk.argumentsDelta
+      else if (chunk.type === 'block-end' && chunk.block?.type === 'tool-call' && typeof chunk.block.arguments === 'string') toolBlockArgs = chunk.block.arguments
+      else if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind !== 'stop' && chunk.reason.kind !== 'tool-calls') failure = chunk.reason
     }
     if (failure && failure.kind === 'error') {
       throw new Error('模型调用失败: ' + String(failure.failure?.message || failure.failure?.code || 'error'))
     }
     if (failure && failure.kind === 'max-tokens') throw new Error('模型输出被截断（max-tokens）')
+    if (asTool) {
+      const rawArgs = (toolBlockArgs || toolArgs).trim()
+      if (!rawArgs) throw new Error('模型未調用 submit_proofread')
+      let parsed
+      try { parsed = JSON.parse(rawArgs) } catch { throw new Error('submit_proofread 參數不是有效 JSON') }
+      const content = typeof parsed?.content === 'string' ? parsed.content.trim() : ''
+      if (!content) throw new Error('submit_proofread 的 content 為空')
+      return content
+    }
     return text.trim()
   } finally {
     clearTimeout(timer)
@@ -1707,7 +1728,7 @@ export function apply(ctx) {
   }
 
   ctx.tavern.gameSettings({
-    title: '自動校對 v1.31',
+    title: '自動校對 v1.32',
     fields: [
       { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。', default: true },
       {
@@ -1723,6 +1744,18 @@ export function apply(ctx) {
         default: 'bypass_local',
       },
       { key: 'tier2', type: 'boolean', label: '候選段落模型／局部校對', description: '僅將命中敘事結構候選的段落送交校對；未命中段落與優秀短句逐字保留。', default: true },
+      {
+        key: 'tier2Route',
+        type: 'select',
+        label: 'Tier 2 輸出方式',
+        description: '工具調用：讓模型把校對結果放進 submit_proofread 的 content，實測可有效避開部分文字輸出審查；或選失敗時自動退回一般文字。',
+        options: [
+          { value: 'text', label: '一般文字（預設）' },
+          { value: 'tool', label: '工具調用 submit_proofread' },
+          { value: 'tool_then_text', label: '工具調用（失敗退回文字）' },
+        ],
+        default: 'text',
+      },
       {
         key: 'mode',
         type: 'select',
@@ -2061,19 +2094,33 @@ export function apply(ctx) {
               }
 
               const guardLevel = cfg.hallucinationGuard || 'strict'
+              const route = cfg.tier2Route || 'text'
+              report.tier2.route = route
+              report.tier2.routeFallbacks = 0
+              const toolSystem = rewriteSystem + '\n\n【輸出方式】必須調用 submit_proofread，把校對後的完整段落放進 content；工具調用以外不要輸出任何文字。'
               const rewriteOne = async (seg) => {
                 if (verSignal?.aborted) throw verSignal.reason || new Error('stale-version')
-                const out = await callHostModel({
+                const baseCall = {
                   llm,
                   provider: bgModel.provider,
                   model: bgModel.model,
                   reasoningEffort: bgModel.reasoningEffort,
-                  system: rewriteSystem,
-                  user: buildPrompt(seg),
                   sessionId: gameId,
                   signal: verSignal,
                   timeoutMs: 120000,
-                })
+                }
+                let out
+                if (route === 'text') {
+                  out = await callHostModel({ ...baseCall, system: rewriteSystem, user: buildPrompt(seg) })
+                } else {
+                  try {
+                    out = await callHostModel({ ...baseCall, system: toolSystem, user: buildPrompt(seg), asTool: true })
+                  } catch (toolErr) {
+                    if (route !== 'tool_then_text') throw toolErr
+                    report.tier2.routeFallbacks += 1
+                    out = await callHostModel({ ...baseCall, system: rewriteSystem, user: buildPrompt(seg) })
+                  }
+                }
                 const text = cleanModelText(out)
                 const check = validateTier2Rewrite(seg.content, text, guardLevel)
                 if (!check.ok) {
@@ -2131,6 +2178,17 @@ export function apply(ctx) {
             }
             report.tier2.ok = true
           }
+        }
+
+        // 統計含露骨詞的段落是否真的被改寫（供「工具調用實驗」確認 NSFW 內容有沒有改成功）
+        {
+          const nsfwChanged = segs.filter(s => s.type === 'text' && typeof s.rewrite === 'string'
+            && s.rewrite.trim() !== s.content.trim() && isSensitiveNsfwSegment(s.content))
+          report.tier2.nsfwRewritten = nsfwChanged.length
+          report.tier2.nsfwPreview = nsfwChanged.slice(0, 2).map(s => ({
+            before: s.content.trim().slice(0, 80),
+            after: s.rewrite.trim().slice(0, 80),
+          }))
         }
 
         // v1.25：改写结果若混进标签先剥掉——保护区只能由原文提供
@@ -2253,10 +2311,18 @@ export function apply(ctx) {
           htmlSalvaged: report.htmlSalvaged === true,
           note: report.note || '',
           tier1: tier1Total,
+          quoteConverted: report.quoteConverted || 0,
+          nsfwRouting: report.nsfwRouting,
+          nsfwBypassed: report.nsfwBypassedCount || 0,
+          nsfwRewritten: report.tier2.nsfwRewritten || 0,
+          dialogueProtected: report.dialogueProtectedCount || 0,
           candidates: report.rewriteCandidates,
           targets: report.targetSegments,
           hasLlm: report.tier2.hasLlm,
           bgModel: report.tier2.bgModel || '',
+          tier2Route: report.tier2.route || 'text',
+          routeFallbacks: report.tier2.routeFallbacks || 0,
+          guardRejected: report.tier2.guardRejected || 0,
           applied: report.tier2.applied || 0,
           changed: report.tier2.changed || 0,
           unchanged: report.tier2.unchanged || 0,

@@ -1,4 +1,4 @@
-// dsh-tavern-autoproof v1.31.0 瀏覽器側模組（分區設定面板 + ？功能說明 + 純本地體檢／NSFW 分流報告）
+// dsh-tavern-autoproof v1.32.0 瀏覽器側模組（分區設定面板 + ？功能說明 + 工具調用通道 + 純本地體檢／NSFW 分流報告）
 window.__ModuleLoader__.load({
   id: 'dsh-tavern-autoproof',
   factory: (require) => {
@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } },
-          h('h3', { style: { margin: 0, fontSize: '16px' } }, 'AutoProof v1.31 校對設定（點擊 ? 查看功能說明）'),
+          h('h3', { style: { margin: 0, fontSize: '16px' } }, 'AutoProof v1.32 校對設定（點擊 ? 查看功能說明）'),
           h(
             'button',
             {
@@ -605,6 +605,21 @@ window.__ModuleLoader__.load({
             report.tier2.error ? `異常：${report.tier2.error}` : `完成（處理 ${report.tier2.segments} 段${guardInfo}）`
           )
         )
+        if (report.tier2.route) {
+          const routeName = report.tier2.route === 'tool' ? '工具調用' : report.tier2.route === 'tool_then_text' ? '工具調用（失敗退回文字）' : '一般文字'
+          const fb = report.tier2.routeFallbacks ? `，退回文字 ${report.tier2.routeFallbacks} 次` : ''
+          rows.push(item('Tier 2 輸出方式', routeName + fb))
+          rows.push(item('改寫成功 / 有改動 / 失敗', `${report.tier2.applied ?? 0} / ${report.tier2.changed ?? 0} / ${(report.tier2.failedSegments || []).length} 段`))
+        }
+        if (report.tier2.nsfwRewritten != null) {
+          rows.push(item('含露骨詞段落改寫成功', `${report.tier2.nsfwRewritten} 段`))
+        }
+      }
+      if (report.tier2 && (report.tier2.nsfwPreview || []).length) {
+        report.tier2.nsfwPreview.forEach((p, i) => {
+          rows.push(item(`NSFW 改寫預覽 ${i + 1}（前）`, p.before))
+          rows.push(item(`NSFW 改寫預覽 ${i + 1}（後）`, p.after))
+        })
       }
 
       const violationText = (report.violations || []).length
@@ -626,7 +641,7 @@ window.__ModuleLoader__.load({
             overflowY: 'auto',
           },
         },
-        h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `AutoProof v1.31 校對報告（第 ${turn} 輪）`),
+        h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `AutoProof v1.32 校對報告（第 ${turn} 輪）`),
         h('div', null, ...rows),
         report.writeError
           ? h(

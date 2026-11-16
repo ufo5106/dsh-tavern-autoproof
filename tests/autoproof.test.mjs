@@ -260,8 +260,10 @@ test('v1.31 純本地規則：引號雙向規範、網文模板詞庫、節奏/�
   )
 
   // 6. 設定檔位正規化 + 深度美學 Prompt
-  const cfg = normalizeSettings({ nsfwRouting: 'invalid_val', aiLexiconLevel: 'strict', historyWindow: 99 })
+  const cfg = normalizeSettings({ nsfwRouting: 'invalid_val', tier2Route: 'tool_then_text', aiLexiconLevel: 'strict', historyWindow: 99 })
   assert.equal(cfg.nsfwRouting, 'bypass_local')
+  assert.equal(cfg.tier2Route, 'tool_then_text')
+  assert.equal(normalizeSettings({ tier2Route: 'unknown' }).tier2Route, 'text')
   assert.equal(cfg.aiLexiconLevel, 'strict')
   assert.equal(cfg.historyWindow, 12)
   assert.ok(buildRewriteSystem('trad', '', 'deep').includes('替換不複用'))

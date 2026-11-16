@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.32.0
+
+- **新增 Tier 2 工具調用通道 (`tier2Route`)**：
+  - 支援 `一般文字（預設）`、`工具調用 submit_proofread` 與 `工具調用（失敗時退回一般文字）` 三種輸出方式，經實測可讓 NSFW 段落通過工具參數 `content` 完成局部校對而不觸發一般文字輸出審查。
+- **報告與日誌增強**：
+  - 校對報告 (`client.js`) 新增顯示 `Tier 2 輸出方式`（含退回次數）、`改寫成功 / 有改動 / 失敗段數`、`含露骨詞段落改寫成功段數` 與 `NSFW 改寫預覽`（前後對照）。
+  - `proof.log` 補齊記錄 `tier2Route`、`routeFallbacks`、`nsfwRouting`、`nsfwBypassed`、`nsfwRewritten`、`dialogueProtected`、`quoteConverted` 與 `guardRejected`，方便精準追蹤每輪運行狀態。
+- **介面清理**：移除開發測試用的「工具調用實驗」按鈕，保留正式的 `校對設定` 與 `重新校對`。
+
 ## 1.31.0
 
 - **NSFW 安全分流防截斷 (`nsfwRouting`)**：新增三檔安全分流策略（`智能分流` / `全篇純本地` / `全部送交 Tier 2`）。預設「智能分流」會在本地預先掃描含露骨成人描寫的段落並留守本地處理，僅將安全敘事段送交雲端 Tier 2，徹底避免整輪觸發 `400 data_inspection_failed` 審查截斷。
