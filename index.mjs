@@ -20,6 +20,11 @@ import {
   isSensitiveNsfwSegment,
   isDialogueProtectedParagraph,
   validateTier2Rewrite,
+  locateParagraphIssues,
+  pickContrastiveExemplars,
+  scoreRewriteCandidate,
+  extractTurnMicroActions,
+  analyzeTurnNarrativeFingerprint,
 } from './lib/local-rules.mjs'
 
 export const name = 'dsh-tavern-autoproof'
@@ -1492,23 +1497,39 @@ export function readCardStyleSpec(card) {
 }
 
 // 跨輪次生成前輕量文體提醒（供 turnSection 注入，避免模型從一開始進入模板化寫作）
-export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard') {
-  if (!recurringKeys.length && mode === 'conservative') return ''
+export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', extra = {}) {
+  const { cooldownWords = [], structuralFlags = [], includeStyleHints = true } = extra
   const hints = []
-  if (recurringKeys.includes('paired_reversal') || recurringKeys.includes('omitted_antithesis')) {
-    hints.push('避免反覆使用「不是A，而是/是B」的否定揭示句式，多數場景事實請直接正面敘述。')
+  if (includeStyleHints && (recurringKeys.length || mode !== 'conservative')) {
+    if (recurringKeys.includes('paired_reversal') || recurringKeys.includes('omitted_antithesis')) {
+      hints.push('避免反覆使用「不是A，而是/是B」的否定揭示句式，多數場景事實請直接正面敘述。')
+    }
+    if (recurringKeys.includes('action_inflation') || recurringKeys.includes('soft_dialogue_stage')) {
+      hints.push('人物動作只在具劇情或人物關係意義時描寫，避免「做了A，A得如何」的頂真拆解，也不必每句對話都配低頭、抬頭等舞台動作。')
+    }
+    if (recurringKeys.includes('reduplication_cluster')) {
+      hints.push('控制「一X一X」疊詞量詞密度，避免同一段內連續堆疊三組以上相同節奏的量詞。')
+    }
+    if (recurringKeys.includes('soft_suspense_escalation')) {
+      hints.push('注意敘事節奏呼吸，不必在每個小節結尾都套用「發現異常→人物反應→更大異常」的加碼公式，允許自然的人物交流與情緒緩衝。')
+    }
   }
-  if (recurringKeys.includes('action_inflation') || recurringKeys.includes('soft_dialogue_stage')) {
-    hints.push('人物動作只在具劇情或人物關係意義時描寫，避免「做了A，A得如何」的頂真拆解，也不必每句對話都配低頭、抬頭等舞台動作。')
+  if (Array.isArray(cooldownWords) && cooldownWords.length > 0) {
+    hints.push(`【高頻動作／意象冷卻】最近幾輪已重複出現「${cooldownWords.slice(0, 5).join('、')}」，本輪請改用其他具體感官或動作描寫，暫時避開上述詞彙。`)
   }
-  if (recurringKeys.includes('reduplication_cluster')) {
-    hints.push('控制「一X一X」疊詞量詞密度，避免同一段內連續堆疊三組以上相同節奏的量詞。')
-  }
-  if (recurringKeys.includes('soft_suspense_escalation')) {
-    hints.push('注意敘事節奏呼吸，不必在每個小節結尾都套用「發現異常→人物反應→更大異常」的加碼公式，允許自然的人物交流與情緒緩衝。')
+  if (Array.isArray(structuralFlags) && structuralFlags.length > 0) {
+    if (structuralFlags.includes('tidy_ending')) {
+      hints.push('【敘事結構提醒】最近多輪均以「心理頓悟／說教總結」收尾；本輪結尾請嘗試直接停在具體動作、環境小質感或對話上，不強行總結。')
+    }
+    if (structuralFlags.includes('flat_pacing')) {
+      hints.push('【節奏變化提醒】最近多輪段長與句長偏均勻，請依場景張力錯落安排長短句與段落呼吸。')
+    }
+    if (structuralFlags.includes('telling_heavy')) {
+      hints.push('【感官具象提醒】最近多輪情緒偏向直接心理說明，請多用具體觸覺、溫度、聲音或空間動作來代替抽象心理詞。')
+    }
   }
   if (!hints.length) return ''
-  return `【敘事文體微調提醒（AutoProof）】\n${hints.map(h => `- ${h}`).join('\n')}`
+  return `【敘事文體微調提醒（AutoProof）】\n${hints.slice(0, 7).map(h => `- ${h}`).join('\n')}`
 }
 
 // v1.28：模型输出清洗——去掉围栏、开头的编号、没头没脑的引导语，只留正文
@@ -1558,7 +1579,7 @@ function combineSignals(a, b) {
 
 // v1.21：宿主 llm 服务没有 chat()，必须走 prepareCall + stream。
 // 带超时，避免卡死后 running 锁永不释放；v1.29 綁定 versionSignal，回退／重生成立即中止。
-async function callHostModel({ llm, provider, model, reasoningEffort, system, user, sessionId, signal: externalSignal, timeoutMs = 120000, asTool = false }) {
+async function callHostModel({ llm, provider, model, reasoningEffort, temperature, system, user, sessionId, signal: externalSignal, timeoutMs = 120000, asTool = false }) {
   if (!llm || typeof llm.prepareCall !== 'function') throw new Error('llm 服务不可用（缺 prepareCall）')
   const ctrl = new AbortController()
   const timer = setTimeout(() => { try { ctrl.abort(new Error('model-timeout')) } catch { /* ignore */ } }, Math.max(10000, timeoutMs))
@@ -1567,6 +1588,7 @@ async function callHostModel({ llm, provider, model, reasoningEffort, system, us
     if (signal.aborted) throw signal.reason || new Error('aborted')
     const cfg = { provider, model }
     if (reasoningEffort !== undefined) cfg.reasoningEffort = reasoningEffort
+    if (typeof temperature === 'number' && provider !== 'openai-codex') cfg.temperature = temperature
     const prepared = await llm.prepareCall(cfg, signal)
     if (signal.aborted) throw signal.reason || new Error('aborted')
     const req = Object.assign({}, prepared.config, {
@@ -1713,22 +1735,49 @@ export function apply(ctx) {
     return autoEdits.get(gameId)
   }
 
-  function trackStyleHistory(gameId, turn, keys, windowSize = 8) {
+  function trackStyleHistory(gameId, turn, keys, windowSize = 8, extra = {}) {
     if (!styleHistory.has(gameId)) styleHistory.set(gameId, [])
     const history = styleHistory.get(gameId)
-    const entry = { turn, keys: [...new Set(keys)] }
+    const entry = {
+      turn,
+      keys: [...new Set(keys)],
+      microActions: extra.microActions || {},
+      structuralFlags: [...new Set(extra.structuralFlags || [])],
+    }
     const existing = history.findIndex(x => x.turn === turn)
     if (existing >= 0) history[existing] = entry
     else history.push(entry)
     history.sort((a, b) => Number(a.turn) - Number(b.turn))
-    const maxLen = Math.max(6, Math.min(10, Number(windowSize) || 8))
+    const maxLen = Math.max(4, Math.min(12, Number(windowSize) || 8))
     while (history.length > maxLen) history.shift()
     persistStyleHistory()
-    return entry.keys.filter(key => history.filter(x => x.keys.includes(key)).length >= 3)
+
+    const recurringKeys = entry.keys.filter(key => history.filter(x => (x.keys || []).includes(key)).length >= 3)
+
+    // 冷卻池：統計最近視窗內的高頻微動作／意象
+    const phraseTurns = new Map()
+    const phraseTotals = new Map()
+    for (const h of history) {
+      const ma = h.microActions && typeof h.microActions === 'object' ? h.microActions : {}
+      for (const [w, cnt] of Object.entries(ma)) {
+        phraseTurns.set(w, (phraseTurns.get(w) || 0) + 1)
+        phraseTotals.set(w, (phraseTotals.get(w) || 0) + (Number(cnt) || 0))
+      }
+    }
+    const cooldownWords = Array.from(phraseTotals.entries())
+      .filter(([w, total]) => (phraseTurns.get(w) || 0) >= 3 || ((phraseTurns.get(w) || 0) >= 2 && total >= 3))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([w]) => w)
+
+    const allStruct = [...new Set(history.flatMap(x => x.structuralFlags || []))]
+    const structuralRecurring = allStruct.filter(f => history.filter(x => (x.structuralFlags || []).includes(f)).length >= 3)
+
+    return { recurringKeys, cooldownWords, structuralRecurring }
   }
 
   ctx.tavern.gameSettings({
-    title: '自動校對 v1.32',
+    title: '自動校對 v1.33',
     fields: [
       { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。', default: true },
       {
@@ -1857,6 +1906,45 @@ export function apply(ctx) {
       },
       { key: 'preHint', type: 'boolean', label: '跨輪次生成前輕量提醒', description: '當最近多輪重複出現同一八股或懸念模板時，於下一輪注入簡短敘事習慣提醒。', default: true },
       { key: 'historyWindow', type: 'number', label: '跨輪次記憶輪數', description: '追蹤最近幾輪的敘事習慣（建議 6～10 輪）。', min: 4, max: 12, default: 8 },
+      { key: 'targetedFeedback', type: 'boolean', label: '精準病灶定位反饋', description: '送交 Tier 2 前抽出確切命中片段，避免模型誤改安全句。', default: true },
+      { key: 'contrastiveExemplars', type: 'boolean', label: '動態正反面極簡對照範例', description: '依命中病灶按需附帶 1～2 組壞寫法→好寫法對照。', default: true },
+      {
+        key: 'bestOfN',
+        type: 'select',
+        label: 'Best-of-N 局部候補擇優',
+        description: '讓重災段落產出多份候補並以本地確定性評分擇優。',
+        options: [
+          { value: '1', label: '關閉（單次改寫）' },
+          { value: 'smart_2', label: '智能雙候補（推薦）' },
+          { value: '2', label: '全部雙候補' },
+          { value: '3', label: '全部三候補' },
+        ],
+        default: '1',
+      },
+      {
+        key: 'cooldownPool',
+        type: 'select',
+        label: '跨輪高頻動作／意象冷卻池',
+        description: '純本地追蹤跨輪高頻微動作並於生成前提示避開（最多 5 個）。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'report', label: '僅報告統計' },
+          { value: 'inject', label: '自動冷卻提醒（推薦）' },
+        ],
+        default: 'inject',
+      },
+      {
+        key: 'narrativeSteering',
+        type: 'select',
+        label: '敘事結構級主動糾偏',
+        description: '純本地追蹤頓悟收尾／節奏扁平／情緒直寫等結構指紋。',
+        options: [
+          { value: 'off', label: '關閉' },
+          { value: 'report', label: '僅報告統計' },
+          { value: 'inject', label: '自動微調提醒（推薦）' },
+        ],
+        default: 'inject',
+      },
       { key: 'dashLimit', type: 'number', label: '破折號觀察上限（引號外）', description: '僅作報告觀察值，不會單獨觸發改寫。', min: 0, max: 20, step: 0.5, default: 2.0 },
       { key: 'shortParaLimit', type: 'number', label: '孤立短段觀察上限', description: '僅作報告觀察值，有效懸疑短句自動豁免。', min: 1, max: 30, default: 8 },
       { key: 'dunhaoLimit', type: 'number', label: '頓號三連觀察上限', description: '僅作報告觀察值，不會單獨觸發改寫。', min: 0, max: 20, default: 2 },
@@ -1864,7 +1952,7 @@ export function apply(ctx) {
     ],
   })
 
-  // 第一層（生成前）：若跨輪次出現重複敘事模板，注入極簡敘事習慣提醒
+  // 第一層（生成前）：若跨輪次出現重複敘事模板、高頻動作冷卻或結構性偏斜，注入極簡習慣提醒
   if (typeof ctx.tavern.turnSection === 'function') {
     ctx.tavern.turnSection({
       name: 'autoproof-habit-guard',
@@ -1872,12 +1960,45 @@ export function apply(ctx) {
       async text({ gameId }) {
         try {
           const cfg = await getEffectiveSettings(gameId)
-          if (cfg.enabled === false || cfg.preHint === false) return ''
+          if (cfg.enabled === false) return ''
           const history = styleHistory.get(gameId) || []
-          if (history.length < 3) return ''
-          const allKeys = [...new Set(history.flatMap(h => h.keys))]
-          const recurring = allKeys.filter(k => history.filter(h => h.keys.includes(k)).length >= 3)
-          return buildTurnConstraintHint(recurring, cfg.mode || 'standard')
+          if (history.length < 2) return ''
+
+          const includeStyleHints = cfg.preHint !== false && history.length >= 3
+          const allKeys = [...new Set(history.flatMap(h => h.keys || []))]
+          const recurring = includeStyleHints
+            ? allKeys.filter(k => history.filter(h => (h.keys || []).includes(k)).length >= 3)
+            : []
+
+          let cooldownWords = []
+          if (cfg.cooldownPool === 'inject') {
+            const phraseTurns = new Map()
+            const phraseTotals = new Map()
+            for (const h of history) {
+              const ma = h.microActions && typeof h.microActions === 'object' ? h.microActions : {}
+              for (const [w, cnt] of Object.entries(ma)) {
+                phraseTurns.set(w, (phraseTurns.get(w) || 0) + 1)
+                phraseTotals.set(w, (phraseTotals.get(w) || 0) + (Number(cnt) || 0))
+              }
+            }
+            cooldownWords = Array.from(phraseTotals.entries())
+              .filter(([w, total]) => (phraseTurns.get(w) || 0) >= 3 || ((phraseTurns.get(w) || 0) >= 2 && total >= 3))
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([w]) => w)
+          }
+
+          let structuralFlags = []
+          if (cfg.narrativeSteering === 'inject' && history.length >= 3) {
+            const allStruct = [...new Set(history.flatMap(h => h.structuralFlags || []))]
+            structuralFlags = allStruct.filter(f => history.filter(h => (h.structuralFlags || []).includes(f)).length >= 3)
+          }
+
+          return buildTurnConstraintHint(recurring, cfg.mode || 'standard', {
+            cooldownWords,
+            structuralFlags,
+            includeStyleHints,
+          })
         } catch {
           return ''
         }
@@ -1984,7 +2105,21 @@ export function apply(ctx) {
           }
         }
 
-        const recurringStyleKeys = trackStyleHistory(gameId, turn, rawStyleKeys, windowSize)
+        const microActionData = (cfg.cooldownPool && cfg.cooldownPool !== 'off')
+          ? extractTurnMicroActions(visible)
+          : { counts: {}, topPhrases: [] }
+        const narrativeFp = (cfg.narrativeSteering && cfg.narrativeSteering !== 'off')
+          ? analyzeTurnNarrativeFingerprint(visible)
+          : { flags: [] }
+
+        const historyRes = trackStyleHistory(gameId, turn, rawStyleKeys, windowSize, {
+          microActions: microActionData.counts,
+          structuralFlags: narrativeFp.flags,
+        })
+        const recurringStyleKeys = historyRes.recurringKeys
+        const cooldownWords = cfg.cooldownPool !== 'off' ? historyRes.cooldownWords : []
+        const structuralRecurring = cfg.narrativeSteering !== 'off' ? historyRes.structuralRecurring : []
+
         const semantic = semanticHits(visible, recurringStyleKeys, { mode })
         for (const s of semantic) {
           if (!violations.some(v => v.key === s.key)) violations.push(s)
@@ -2005,6 +2140,8 @@ export function apply(ctx) {
           localAudit: {
             lexicon: lexiconAudit,
             rhythm: rhythmAudit,
+            cooldownWords,
+            structuralRecurring,
           },
           violations,
           limits,
@@ -2013,7 +2150,7 @@ export function apply(ctx) {
           targetSegments: 0,
           nsfwBypassedCount: 0,
           dialogueProtectedCount: 0,
-          tier2: { ran: false, ok: false, segments: 0, error: '', guardRejected: 0 },
+          tier2: { ran: false, ok: false, segments: 0, error: '', guardRejected: 0, bestOfNRuns: 0, bestOfNWins: 0 },
         }
 
         const tier2On = cfg.tier2 !== false && cfg.nsfwRouting !== 'local_only'
@@ -2076,13 +2213,31 @@ export function apply(ctx) {
                 : null
               const rewriteSystem = buildRewriteSystem(toScript, cardSpec.styleGuide, cfg.aestheticPrompt || 'deep')
 
-              // v1.29b：一段一請求（並發 3），直接聚焦該段命中的候選類型，避免整輪 11 項候選分散注意力
+              // v1.33：精準定位命中片段 + 按需動態正反面極簡對照範例
               const buildPrompt = (seg) => {
                 const findings = seg.findings || []
                 const mustMerge = findings.includes('action_inflation') || findings.includes('action_chain')
+                const locatedSpans = cfg.targetedFeedback !== false
+                  ? locateParagraphIssues(seg.content, findings, {
+                      protectDialogue: cfg.protectDialogue !== false,
+                      lexiconLevel: cfg.aiLexiconLevel || 'balanced',
+                    })
+                  : []
+                const exemplars = cfg.contrastiveExemplars !== false
+                  ? pickContrastiveExemplars(findings, {
+                      toScript,
+                      maxItems: cfg.aestheticPrompt === 'standard' ? 1 : 2,
+                    })
+                  : []
                 return [
                   `【校對模式】${mode}`,
                   '【本段命中類型】' + (findings.join('、') || '局部校對'),
+                  locatedSpans.length
+                    ? `【精準定位命中（請優先僅針對以下片段微調，其餘正常語句盡量保留）】\n- ${locatedSpans.join('\n- ')}`
+                    : '',
+                  exemplars.length
+                    ? `【對照範例（參考語感，勿照抄）】\n${exemplars.join('\n')}`
+                    : '',
                   seg.guidance ? '【編修要求】' + seg.guidance : '',
                   mustMerge ? '注意：本段明確存在單一動作過度拆解或動詞接龍，請直接合併精簡為 1～2 個俐落分句，不要原樣照抄。' : '',
                   seg.contextBefore ? '【前文（僅供理解，不可改寫）】\n' + seg.contextBefore : '',
@@ -2095,41 +2250,77 @@ export function apply(ctx) {
 
               const guardLevel = cfg.hallucinationGuard || 'strict'
               const route = cfg.tier2Route || 'text'
+              const bestOfNMode = cfg.bestOfN || '1'
               report.tier2.route = route
+              report.tier2.bestOfN = bestOfNMode
               report.tier2.routeFallbacks = 0
               const toolSystem = rewriteSystem + '\n\n【輸出方式】必須調用 submit_proofread，把校對後的完整段落放進 content；工具調用以外不要輸出任何文字。'
-              const rewriteOne = async (seg) => {
-                if (verSignal?.aborted) throw verSignal.reason || new Error('stale-version')
+
+              const callOnce = async (segPrompt, temperature) => {
                 const baseCall = {
                   llm,
                   provider: bgModel.provider,
                   model: bgModel.model,
                   reasoningEffort: bgModel.reasoningEffort,
+                  temperature,
                   sessionId: gameId,
                   signal: verSignal,
                   timeoutMs: 120000,
                 }
-                let out
                 if (route === 'text') {
-                  out = await callHostModel({ ...baseCall, system: rewriteSystem, user: buildPrompt(seg) })
-                } else {
-                  try {
-                    out = await callHostModel({ ...baseCall, system: toolSystem, user: buildPrompt(seg), asTool: true })
-                  } catch (toolErr) {
-                    if (route !== 'tool_then_text') throw toolErr
-                    report.tier2.routeFallbacks += 1
-                    out = await callHostModel({ ...baseCall, system: rewriteSystem, user: buildPrompt(seg) })
-                  }
+                  return await callHostModel({ ...baseCall, system: rewriteSystem, user: segPrompt })
                 }
-                const text = cleanModelText(out)
-                const check = validateTier2Rewrite(seg.content, text, guardLevel)
-                if (!check.ok) {
-                  if (check.reason && check.reason !== 'empty') {
-                    report.tier2.guardRejected = (report.tier2.guardRejected || 0) + 1
+                try {
+                  return await callHostModel({ ...baseCall, system: toolSystem, user: segPrompt, asTool: true })
+                } catch (toolErr) {
+                  if (route !== 'tool_then_text') throw toolErr
+                  report.tier2.routeFallbacks += 1
+                  return await callHostModel({ ...baseCall, system: rewriteSystem, user: segPrompt })
+                }
+              }
+
+              const rewriteOne = async (seg) => {
+                if (verSignal?.aborted) throw verSignal.reason || new Error('stale-version')
+                const segPrompt = buildPrompt(seg)
+                const findingsCount = (seg.findings || []).length
+                const n = bestOfNMode === '3'
+                  ? 3
+                  : bestOfNMode === '2'
+                    ? 2
+                    : (bestOfNMode === 'smart_2' && (findingsCount >= 2 || seg.content.length >= 180) ? 2 : 1)
+
+                if (n <= 1) {
+                  const out = await callOnce(segPrompt, undefined)
+                  const text = cleanModelText(out)
+                  const check = validateTier2Rewrite(seg.content, text, guardLevel)
+                  if (!check.ok) {
+                    if (check.reason && check.reason !== 'empty') {
+                      report.tier2.guardRejected = (report.tier2.guardRejected || 0) + 1
+                    }
+                    return null
                   }
+                  return text
+                }
+
+                // Best-of-N 局部候補平行生成 + 本地確定性評分擇優
+                report.tier2.bestOfNRuns += 1
+                const temps = [undefined, 0.85, 1.0].slice(0, n)
+                const rawCandidates = await Promise.all(
+                  temps.map((t) => callOnce(segPrompt, t).then(cleanModelText).catch(() => ''))
+                )
+                const scored = rawCandidates.map((cand, idx) => ({
+                  idx,
+                  text: cand,
+                  ...scoreRewriteCandidate(seg.content, cand, guardLevel),
+                }))
+                const valid = scored.filter((x) => x.ok)
+                if (!valid.length) {
+                  report.tier2.guardRejected = (report.tier2.guardRejected || 0) + 1
                   return null
                 }
-                return text
+                valid.sort((a, b) => b.score - a.score)
+                if (valid[0].idx > 0) report.tier2.bestOfNWins += 1
+                return valid[0].text
               }
 
               const failedSegs = []
@@ -2321,8 +2512,13 @@ export function apply(ctx) {
           hasLlm: report.tier2.hasLlm,
           bgModel: report.tier2.bgModel || '',
           tier2Route: report.tier2.route || 'text',
+          bestOfN: report.tier2.bestOfN || '1',
+          bestOfNRuns: report.tier2.bestOfNRuns || 0,
+          bestOfNWins: report.tier2.bestOfNWins || 0,
           routeFallbacks: report.tier2.routeFallbacks || 0,
           guardRejected: report.tier2.guardRejected || 0,
+          cooldownWords: report.localAudit?.cooldownWords || [],
+          structuralRecurring: report.localAudit?.structuralRecurring || [],
           applied: report.tier2.applied || 0,
           changed: report.tier2.changed || 0,
           unchanged: report.tier2.unchanged || 0,
@@ -2476,4 +2672,9 @@ export const __test = Object.freeze({
   isSensitiveNsfwSegment,
   isDialogueProtectedParagraph,
   validateTier2Rewrite,
+  locateParagraphIssues,
+  pickContrastiveExemplars,
+  scoreRewriteCandidate,
+  extractTurnMicroActions,
+  analyzeTurnNarrativeFingerprint,
 })

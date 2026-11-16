@@ -268,3 +268,61 @@ test('v1.31 純本地規則：引號雙向規範、網文模板詞庫、節奏/�
   assert.equal(cfg.historyWindow, 12)
   assert.ok(buildRewriteSystem('trad', '', 'deep').includes('替換不複用'))
 })
+
+test('v1.33 品質強化：精準定位、動態對照範例、Best-of-N 評分、動作冷卻池與 StoryScope 結構糾偏', () => {
+  const {
+    locateParagraphIssues,
+    pickContrastiveExemplars,
+    scoreRewriteCandidate,
+    extractTurnMicroActions,
+    analyzeTurnNarrativeFingerprint,
+    buildTurnConstraintHint,
+    normalizeSettings,
+  } = __test
+
+  // 1. 精準病灶定位：對話保護區啟用時不應誤抓台詞內的詞
+  const para = '「你別再嘴角勾起冷笑了！」他眼中閃過一絲寒意，進行了細緻的觀察。'
+  const spansProtected = locateParagraphIssues(para, ['local_webnovel_lexicon'], { protectDialogue: true })
+  assert.equal(spansProtected.includes('嘴角勾起'), false)
+  assert.equal(spansProtected.includes('眼中閃過'), true)
+  assert.ok(spansProtected.some(s => s.includes('進行了細緻的觀察')))
+
+  // 2. 動態正反面極簡對照範例（依命中按需抽取，支援繁簡）
+  const exTrad = pickContrastiveExemplars(['action_inflation', 'paired_reversal', 'reduplication_cluster'], { toScript: 'trad', maxItems: 2 })
+  assert.equal(exTrad.length, 2)
+  assert.ok(exTrad[0].includes('點了點頭'))
+  const exSimp = pickContrastiveExemplars(['paired_reversal'], { toScript: 'simp', maxItems: 2 })
+  assert.ok(exSimp[0].includes('改为'))
+
+  // 3. Best-of-N 本地確定性評分器：真修復勝過照抄，幻覺數字直接判 -Infinity
+  const orig = '他嘴角勾起，眼中閃過一絲冷意，走過去拿起茶杯。'
+  const lazyCopy = orig
+  const goodFix = '他扯了扯嘴角，走過去端起茶杯。'
+  const hallucinatedNum = '他扯了扯嘴角，拿起了300個茶杯。'
+  assert.ok(scoreRewriteCandidate(orig, goodFix, 'strict').score > scoreRewriteCandidate(orig, lazyCopy, 'strict').score)
+  assert.equal(scoreRewriteCandidate(orig, hallucinatedNum, 'strict').ok, false)
+
+  // 4. 跨輪微動作提取（忽略純對話行）
+  const micro = extractTurnMicroActions('「嘴角勾起什麼？」\n他喉結滾動了一下，呼吸一滯。')
+  assert.equal(micro.counts['嘴角勾起'], undefined)
+  assert.equal(micro.counts['喉結滾動'], 1)
+  assert.equal(micro.counts['呼吸一滯'], 1)
+
+  // 5. StoryScope 敘事結構指紋與統一生成前提醒
+  const fp = analyzeTurnNarrativeFingerprint('他推開門看了一眼。\n那一刻，他終於明白命運的齒輪已經開始轉動。')
+  assert.equal(fp.tidyEnding, true)
+  assert.ok(fp.flags.includes('tidy_ending'))
+
+  const hint = buildTurnConstraintHint(['paired_reversal'], 'standard', {
+    cooldownWords: ['喉結滾動', '呼吸一滯'],
+    structuralFlags: ['tidy_ending'],
+  })
+  assert.ok(hint.includes('喉結滾動、呼吸一滯'))
+  assert.ok(hint.includes('心理頓悟／說教總結'))
+
+  // 6. 新設定正規化
+  const s = normalizeSettings({ bestOfN: 'smart_2', cooldownPool: 'report', narrativeSteering: 'invalid' })
+  assert.equal(s.bestOfN, 'smart_2')
+  assert.equal(s.cooldownPool, 'report')
+  assert.equal(s.narrativeSteering, 'inject')
+})

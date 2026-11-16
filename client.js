@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } },
-          h('h3', { style: { margin: 0, fontSize: '16px' } }, 'AutoProof v1.32 校對設定（點擊 ? 查看功能說明）'),
+          h('h3', { style: { margin: 0, fontSize: '16px' } }, 'AutoProof v1.33 校對設定（點擊 ? 查看功能說明）'),
           h(
             'button',
             {
@@ -597,12 +597,19 @@ window.__ModuleLoader__.load({
       if ((report.recurringStyleKeys || []).length) {
         rows.push(item('跨輪重複', report.recurringStyleKeys.join('、')))
       }
+      if ((report.localAudit?.cooldownWords || []).length) {
+        rows.push(item('高頻動作冷卻池', report.localAudit.cooldownWords.join('、')))
+      }
+      if ((report.localAudit?.structuralRecurring || []).length) {
+        rows.push(item('敘事結構提醒（StoryScope）', report.localAudit.structuralRecurring.join('、')))
+      }
       if (report.tier2 && report.tier2.ran) {
         const guardInfo = report.tier2.guardRejected ? `，防幻覺退回 ${report.tier2.guardRejected} 段` : ''
+        const bonInfo = report.tier2.bestOfNRuns ? `，Best-of-N 擇優 ${report.tier2.bestOfNRuns} 次（勝出 ${report.tier2.bestOfNWins || 0} 次）` : ''
         rows.push(
           item(
             '第二層局部校對狀態',
-            report.tier2.error ? `異常：${report.tier2.error}` : `完成（處理 ${report.tier2.segments} 段${guardInfo}）`
+            report.tier2.error ? `異常：${report.tier2.error}` : `完成（處理 ${report.tier2.segments} 段${guardInfo}${bonInfo}）`
           )
         )
         if (report.tier2.route) {
@@ -641,7 +648,7 @@ window.__ModuleLoader__.load({
             overflowY: 'auto',
           },
         },
-        h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `AutoProof v1.32 校對報告（第 ${turn} 輪）`),
+        h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `AutoProof v1.33 校對報告（第 ${turn} 輪）`),
         h('div', null, ...rows),
         report.writeError
           ? h(

@@ -1,7 +1,7 @@
 {
   "name": "dsh-tavern-autoproof",
-  "version": "1.32.0",
-  "description": "DSH Tavern 自動校對與去 AI 文體插件（v1.32.0：Tier 2 工具調用通道 submit_proofread + 純本地 0-Token 去 AI 味體檢 + NSFW 安全分流 + 雙向引號規範 + 分項設定 UI）",
+  "version": "1.33.0",
+  "description": "DSH Tavern 自動校對與去 AI 文體插件（v1.33.0：精準病灶定位 + Best-of-N 局部擇優 + 動態正反面範例 + 跨輪動作冷卻池 + StoryScope 結構糾偏）",
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs"
