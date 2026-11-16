@@ -1776,10 +1776,11 @@ export function apply(ctx) {
     return { recurringKeys, cooldownWords, structuralRecurring }
   }
 
+  // 宿主 gameSettings 上限為 1–20 項；此處保留核心 12 項，完整 19 項分頁與 ? 說明請使用輸入列「校對設定」面板
   ctx.tavern.gameSettings({
     title: '自動校對 v1.33',
     fields: [
-      { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。', default: true },
+      { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。完整分項設定與 ? 說明請點輸入列「校對設定」。', default: true },
       {
         key: 'nsfwRouting',
         type: 'select',
@@ -1797,7 +1798,7 @@ export function apply(ctx) {
         key: 'tier2Route',
         type: 'select',
         label: 'Tier 2 輸出方式',
-        description: '工具調用：讓模型把校對結果放進 submit_proofread 的 content，實測可有效避開部分文字輸出審查；或選失敗時自動退回一般文字。',
+        description: '工具調用：讓模型把校對結果放進 submit_proofread 的 content，實測可有效避開部分文字輸出審查。',
         options: [
           { value: 'text', label: '一般文字（預設）' },
           { value: 'tool', label: '工具調用 submit_proofread' },
@@ -1818,18 +1819,6 @@ export function apply(ctx) {
         default: 'standard',
       },
       {
-        key: 'charFixMode',
-        type: 'select',
-        label: '字級修復檔位',
-        description: '關閉／僅簡繁錯字／完整（含英文殘留與漏字修復）。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'chars_only', label: '僅修簡繁錯字' },
-          { value: 'full', label: '完整修復（推薦）' },
-        ],
-        default: 'full',
-      },
-      {
         key: 'script',
         type: 'select',
         label: '輸出字形',
@@ -1841,110 +1830,8 @@ export function apply(ctx) {
         ],
         default: 'auto',
       },
-      {
-        key: 'quoteNormalize',
-        type: 'select',
-        label: '雙向引號規範',
-        description: '自動統一繁體直角引號「」『』或簡體彎引號“”‘’。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'auto', label: '跟隨字形（推薦）' },
-          { value: 'trad_corner', label: '強制「」『』' },
-          { value: 'simp_curly', label: '強制“”‘’' },
-        ],
-        default: 'auto',
-      },
-      {
-        key: 'aiLexiconLevel',
-        type: 'select',
-        label: '網文 AI 模板詞密度',
-        description: '純本地 0 Token 偵測網文套話與弱化副詞千字密度。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'report', label: '僅報告標記' },
-          { value: 'strict', label: '嚴格（>2.0/千字）' },
-          { value: 'balanced', label: '平衡（>3.0/千字）' },
-          { value: 'relaxed', label: '寬鬆（>5.0/千字）' },
-        ],
-        default: 'balanced',
-      },
-      {
-        key: 'localRhythmAudit',
-        type: 'select',
-        label: '本地節奏與六感體檢',
-        description: '純本地偵測段落節奏 CV、結尾升華腔、公式轉折與六感平衡。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'basic', label: '基礎（節奏＋升華尾句）' },
-          { value: 'full', label: '完整（含六感＋撞場）' },
-        ],
-        default: 'full',
-      },
-      { key: 'protectDialogue', type: 'boolean', label: '對話與口癖保護區', description: '保護純對白與引號內角色口癖，避免被 Tier 2 改平。', default: true },
-      {
-        key: 'hallucinationGuard',
-        type: 'select',
-        label: '改寫後本地防幻覺守門',
-        description: '純本地核對中/阿數字等價與長度，嚴格檔禁止引入新 AI 詞。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'standard', label: '標準（數字＋長度）' },
-          { value: 'strict', label: '嚴格（含禁新 AI 詞）' },
-        ],
-        default: 'strict',
-      },
-      {
-        key: 'aestheticPrompt',
-        type: 'select',
-        label: '小說美學編修紀律',
-        description: '深度美學含「替換不複用」「動作後少解釋一句」「停早一拍」。',
-        options: [
-          { value: 'standard', label: '標準紀律' },
-          { value: 'deep', label: '深度美學（推薦）' },
-        ],
-        default: 'deep',
-      },
       { key: 'preHint', type: 'boolean', label: '跨輪次生成前輕量提醒', description: '當最近多輪重複出現同一八股或懸念模板時，於下一輪注入簡短敘事習慣提醒。', default: true },
       { key: 'historyWindow', type: 'number', label: '跨輪次記憶輪數', description: '追蹤最近幾輪的敘事習慣（建議 6～10 輪）。', min: 4, max: 12, default: 8 },
-      { key: 'targetedFeedback', type: 'boolean', label: '精準病灶定位反饋', description: '送交 Tier 2 前抽出確切命中片段，避免模型誤改安全句。', default: true },
-      { key: 'contrastiveExemplars', type: 'boolean', label: '動態正反面極簡對照範例', description: '依命中病灶按需附帶 1～2 組壞寫法→好寫法對照。', default: true },
-      {
-        key: 'bestOfN',
-        type: 'select',
-        label: 'Best-of-N 局部候補擇優',
-        description: '讓重災段落產出多份候補並以本地確定性評分擇優。',
-        options: [
-          { value: '1', label: '關閉（單次改寫）' },
-          { value: 'smart_2', label: '智能雙候補（推薦）' },
-          { value: '2', label: '全部雙候補' },
-          { value: '3', label: '全部三候補' },
-        ],
-        default: '1',
-      },
-      {
-        key: 'cooldownPool',
-        type: 'select',
-        label: '跨輪高頻動作／意象冷卻池',
-        description: '純本地追蹤跨輪高頻微動作並於生成前提示避開（最多 5 個）。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'report', label: '僅報告統計' },
-          { value: 'inject', label: '自動冷卻提醒（推薦）' },
-        ],
-        default: 'inject',
-      },
-      {
-        key: 'narrativeSteering',
-        type: 'select',
-        label: '敘事結構級主動糾偏',
-        description: '純本地追蹤頓悟收尾／節奏扁平／情緒直寫等結構指紋。',
-        options: [
-          { value: 'off', label: '關閉' },
-          { value: 'report', label: '僅報告統計' },
-          { value: 'inject', label: '自動微調提醒（推薦）' },
-        ],
-        default: 'inject',
-      },
       { key: 'dashLimit', type: 'number', label: '破折號觀察上限（引號外）', description: '僅作報告觀察值，不會單獨觸發改寫。', min: 0, max: 20, step: 0.5, default: 2.0 },
       { key: 'shortParaLimit', type: 'number', label: '孤立短段觀察上限', description: '僅作報告觀察值，有效懸疑短句自動豁免。', min: 1, max: 30, default: 8 },
       { key: 'dunhaoLimit', type: 'number', label: '頓號三連觀察上限', description: '僅作報告觀察值，不會單獨觸發改寫。', min: 0, max: 20, default: 2 },
