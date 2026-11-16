@@ -2499,6 +2499,8 @@ export function apply(ctx) {
     const normalized = normalizeSettings(settings)
     if (scope === 'global') {
       globalSettings = normalized
+      // 清除目前角色卡的舊覆寫，讓本角色卡立即繼承剛儲存的全域預設（避免畫面彈回舊值）
+      if (gameId) settingsByGame.delete(gameId)
     } else if (gameId) {
       settingsByGame.set(gameId, normalized)
     } else {
