@@ -76,10 +76,10 @@ export const CHAR_FIXES = Object.freeze({
   "刿":"劌", "剀":"剴", "剂":"劑", "剐":"剮", "剑":"劍", "剥":"剝", "剧":"劇", "劝":"勸", "办":"辦", "务":"務", "劢":"勱", "动":"動", "励":"勵", "劲":"勁", "劳":"勞", "势":"勢", "勋":"勳", "勚":"勩", "匀":"勻", "匦":"匭",
   "匮":"匱", "区":"區", "医":"醫", "华":"華", "协":"協", "单":"單", "卖":"賣", "占":"佔", "卢":"盧", "卤":"滷", "卧":"臥", "卫":"衛", "却":"卻", "卺":"巹", "厂":"廠", "厅":"廳", "历":"歷", "厉":"厲", "压":"壓", "厌":"厭",
   "厍":"厙", "厐":"龎", "厕":"廁", "厘":"釐", "厢":"廂", "厣":"厴", "厦":"廈", "厨":"廚", "厩":"廄", "厮":"廝", "县":"縣", "叁":"叄", "参":"參", "叆":"靉", "叇":"靆", "双":"雙", "变":"變", "叙":"敘", "叠":"疊", "叶":"葉",
-  "号":"號", "叹":"嘆", "叽":"嘰", "吁":"籲", "吃":"吃", "吓":"嚇", "吕":"呂", "吗":"嗎", "吨":"噸", "听":"聽", "启":"啟", "吴":"吳", "呐":"吶", "呒":"嘸", "呓":"囈", "呕":"嘔", "呖":"嚦", "呗":"唄", "员":"員", "呙":"咼",
+  "号":"號", "叹":"嘆", "叽":"嘰", "吁":"籲", "吓":"嚇", "吕":"呂", "吗":"嗎", "吨":"噸", "听":"聽", "启":"啟", "吴":"吳", "呐":"吶", "呒":"嘸", "呓":"囈", "呕":"嘔", "呖":"嚦", "呗":"唄", "员":"員", "呙":"咼",
   "呛":"嗆", "呜":"嗚", "咏":"詠", "咙":"嚨", "咛":"嚀", "咝":"噝", "咤":"吒", "咨":"諮", "咸":"鹹", "响":"響", "哑":"啞", "哒":"噠", "哓":"嘵", "哔":"嗶", "哕":"噦", "哗":"譁", "哙":"噲", "哜":"嚌", "哝":"噥", "哟":"喲",
   "唇":"脣", "唛":"嘜", "唝":"嗊", "唠":"嘮", "唡":"啢", "唢":"嗩", "唤":"喚", "啧":"嘖", "啬":"嗇", "啭":"囀", "啮":"齧", "啯":"嘓", "啰":"囉", "啴":"嘽", "啸":"嘯", "喷":"噴", "喽":"嘍", "喾":"嚳", "嗫":"囁", "嗳":"噯",
-  "嘘":"噓", "嘤":"嚶", "嘱":"囑", "噜":"嚕", "嚣":"囂", "园":"園", "囱":"囪", "围":"圍", "囵":"圇", "国":"國", "图":"圖", "圆":"圓", "圣":"聖", "圹":"壙", "场":"場", "坏":"壞", "块":"塊", "坚":"堅", "坛":"壇", "坜":"壢",
+  "嘘":"噓", "嘤":"嚶", "嘱":"囑", "噜":"嚕", "嚣":"囂", "团":"團", "园":"園", "囱":"囪", "围":"圍", "囵":"圇", "国":"國", "图":"圖", "圆":"圓", "圣":"聖", "圹":"壙", "场":"場", "坏":"壞", "块":"塊", "坚":"堅", "坛":"壇", "坜":"壢",
   "坝":"壩", "坞":"塢", "坟":"墳", "坠":"墜", "垄":"壟", "垅":"壠", "垆":"壚", "垒":"壘", "垦":"墾", "垩":"堊", "垫":"墊", "垭":"埡", "垯":"墶", "垱":"壋", "垲":"塏", "垴":"堖", "埘":"塒", "埙":"壎", "埚":"堝", "堑":"塹",
   "堕":"墮", "塆":"壪", "墙":"牆", "壮":"壯", "声":"聲", "壳":"殼", "壶":"壺", "壸":"壼", "处":"處", "备":"備", "够":"夠", "头":"頭", "夸":"誇", "夹":"夾", "夺":"奪", "奁":"奩", "奂":"奐", "奋":"奮", "奖":"獎", "奥":"奧",
   "妆":"妝", "妇":"婦", "妈":"媽", "妩":"嫵", "妪":"嫗", "妫":"嬀", "姗":"姍", "姹":"奼", "娄":"婁", "娅":"婭", "娆":"嬈", "娇":"嬌", "娈":"孌", "娱":"娛", "娲":"媧", "娴":"嫺", "婳":"嫿", "婴":"嬰", "婵":"嬋", "婶":"嬸",
@@ -87,7 +87,7 @@ export const CHAR_FIXES = Object.freeze({
   "寻":"尋", "导":"導", "寿":"壽", "将":"將", "尔":"爾", "尘":"塵", "尝":"嘗", "尧":"堯", "尴":"尷", "尸":"屍", "尽":"盡", "层":"層", "屃":"屓", "屉":"屜", "届":"屆", "属":"屬", "屡":"屢", "屦":"屨", "屿":"嶼", "岁":"歲",
   "岂":"豈", "岖":"嶇", "岗":"崗", "岘":"峴", "岚":"嵐", "岛":"島", "岩":"巖", "岭":"嶺", "岳":"嶽", "岽":"崬", "岿":"巋", "峃":"嶨", "峄":"嶧", "峡":"峽", "峣":"嶢", "峤":"嶠", "峥":"崢", "峦":"巒", "峰":"峯", "崂":"嶗",
   "崃":"崍", "崄":"嶮", "崭":"嶄", "嵘":"嶸", "嵚":"嶔", "嵝":"嶁", "巅":"巔", "巩":"鞏", "巯":"巰", "币":"幣", "帅":"帥", "师":"師", "帏":"幃", "帐":"帳", "帘":"簾", "帜":"幟", "带":"帶", "帧":"幀", "帮":"幫", "帱":"幬",
-  "帻":"幘", "帼":"幗", "幂":"冪", "并":"並", "广":"廣", "庄":"莊", "庆":"慶", "床":"床", "庐":"廬", "庑":"廡", "库":"庫", "应":"應", "庙":"廟", "庞":"龐", "废":"廢", "庼":"廎", "廪":"廩", "开":"開", "异":"異", "弃":"棄",
+  "帻":"幘", "帼":"幗", "幂":"冪", "并":"並", "广":"廣", "庄":"莊", "庆":"慶", "庐":"廬", "庑":"廡", "库":"庫", "应":"應", "庙":"廟", "庞":"龐", "废":"廢", "庼":"廎", "廪":"廩", "开":"開", "异":"異", "弃":"棄",
   "弑":"弒", "张":"張", "弥":"彌", "弪":"弳", "弯":"彎", "弹":"彈", "强":"強", "归":"歸", "当":"當", "录":"錄", "彟":"彠", "彦":"彥", "彨":"彲", "彻":"徹", "径":"徑", "徕":"徠", "忆":"憶", "忏":"懺", "忧":"憂",
   "忾":"愾", "怀":"懷", "态":"態", "怂":"慫", "怃":"憮", "怄":"慪", "怅":"悵", "怆":"愴", "怜":"憐", "总":"總", "怼":"懟", "怿":"懌", "恋":"戀", "恒":"恆", "恳":"懇", "恶":"惡", "恸":"慟", "恹":"懨", "恺":"愷", "恻":"惻",
   "恼":"惱", "恽":"惲", "悦":"悅", "悫":"愨", "悬":"懸", "悭":"慳", "悮":"悞", "悯":"憫", "惊":"驚", "惧":"懼", "惨":"慘", "惩":"懲", "惫":"憊", "惬":"愜", "惭":"慚", "惮":"憚", "惯":"慣", "愠":"慍", "愤":"憤", "愦":"憒",
@@ -410,6 +410,42 @@ export const PHRASE_FIXES = Object.freeze([
   { from: '口袋里', to: '口袋裡', kind: 'simp_phrase' },
   { from: '被子里', to: '被子裡', kind: 'simp_phrase' },
   { from: '屏幕里', to: '屏幕裡', kind: 'simp_phrase' },
+  { from: '通道里', to: '通道裡', kind: 'simp_phrase' },
+  { from: '頻道里', to: '頻道裡', kind: 'simp_phrase' },
+  { from: '频道里', to: '頻道裡', kind: 'simp_phrase' },
+  { from: '林子里', to: '林子裡', kind: 'simp_phrase' },
+  { from: '耳朵里', to: '耳朵裡', kind: 'simp_phrase' },
+  { from: '杯里', to: '杯裡', kind: 'simp_phrase' },
+  { from: '隊里', to: '隊裡', kind: 'simp_phrase' },
+  { from: '队里', to: '隊裡', kind: 'simp_phrase' },
+  { from: '碗里', to: '碗裡', kind: 'simp_phrase' },
+  { from: '鍋里', to: '鍋裡', kind: 'simp_phrase' },
+  { from: '包里', to: '包裡', kind: 'simp_phrase' },
+  { from: '抽屜里', to: '抽屜裡', kind: 'simp_phrase' },
+  { from: '被窩里', to: '被窩裡', kind: 'simp_phrase' },
+  { from: '腦子里', to: '腦子裡', kind: 'simp_phrase' },
+  { from: '脑子里', to: '腦子裡', kind: 'simp_phrase' },
+  { from: '鏡子里', to: '鏡子裡', kind: 'simp_phrase' },
+  { from: '镜子里', to: '鏡子裡', kind: 'simp_phrase' },
+  { from: '空氣里', to: '空氣裡', kind: 'simp_phrase' },
+  { from: '风里', to: '風裡', kind: 'simp_phrase' },
+  { from: '風里', to: '風裡', kind: 'simp_phrase' },
+  { from: '雨里', to: '雨裡', kind: 'simp_phrase' },
+  { from: '霧里', to: '霧裡', kind: 'simp_phrase' },
+  { from: '角落里', to: '角落裡', kind: 'simp_phrase' },
+  { from: '人群里', to: '人群裡', kind: 'simp_phrase' },
+  { from: '話里', to: '話裡', kind: 'simp_phrase' },
+  { from: '电梯里', to: '電梯裡', kind: 'simp_phrase' },
+  { from: '電梯里', to: '電梯裡', kind: 'simp_phrase' },
+  { from: '網吧里', to: '網吧裡', kind: 'simp_phrase' },
+  { from: '訓練室里', to: '訓練室裡', kind: 'simp_phrase' },
+  { from: '训练室里', to: '訓練室裡', kind: 'simp_phrase' },
+  { from: '賽場里', to: '賽場裡', kind: 'simp_phrase' },
+  { from: '赛场里', to: '賽場裡', kind: 'simp_phrase' },
+  { from: '比賽里', to: '比賽裡', kind: 'simp_phrase' },
+  { from: '比赛里', to: '比賽裡', kind: 'simp_phrase' },
+  { from: '一分鍾', to: '一分鐘', kind: 'typo' },
+  { from: '分鍾', to: '分鐘', kind: 'typo' },
   // 「着」在常見動詞／持續體語境（保留「著想、著作」以外的動作詞組）
   { from: '帶着', to: '帶著', kind: 'simp_phrase' },
   { from: '带着', to: '帶著', kind: 'simp_phrase' },
@@ -558,6 +594,11 @@ export function applyCharFixes(input, options = {}) {
       if (!replacement) return full
       recordFix(word, replacement, 1)
       return `${pre}${replacement}${post}`
+    })
+    // 修復中文字之間誤夾的英文半形逗號（如「位置,便」）
+    text = text.replace(/([\u4e00-\u9fff]),([\u4e00-\u9fff])/g, (_, pre, post) => {
+      recordFix(',', '，', 1)
+      return `${pre}，${post}`
     })
   }
 
@@ -1562,6 +1603,12 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     if (structuralFlags.includes('telling_heavy')) {
       hints.push('【感官具象提醒】最近多輪情緒偏向直接心理說明，請多用具體觸覺、溫度、聲音或空間動作來代替抽象心理詞。')
     }
+    if (structuralFlags.includes('dialogue_sandwich')) {
+      hints.push('【對話自然度提醒】近期出現多段「『台詞』＋插入動作＋『台詞』」三明治格式或「語氣很平，手卻…」反差模板；對話請直接自然接話，不需每句都配微動作，也避免對隊友複誦人盡皆知的背景設定。')
+    }
+    if (structuralFlags.includes('verb_triple_parallel')) {
+      hints.push('【句型去公式提醒】減少「動詞A，動詞B，動詞C」三連排比與對仗格言短句，改用更自然口語的節奏表達。')
+    }
   }
   if (!hints.length) return ''
   return `【敘事文體微調提醒（AutoProof）】\n${hints.slice(0, 7).map(h => `- ${h}`).join('\n')}`
@@ -1805,10 +1852,17 @@ export function apply(ctx) {
       .slice(0, 5)
       .map(([w]) => w)
 
-    const allStruct = [...new Set(history.flatMap(x => x.structuralFlags || []))]
-    const structuralRecurring = allStruct.filter(f => history.filter(x => (x.structuralFlags || []).includes(f)).length >= 3)
+    const structuralRecurring = pickRecurringStructuralFlags(history)
 
     return { recurringKeys, cooldownWords, structuralRecurring }
+  }
+
+  function pickRecurringStructuralFlags(history = []) {
+    const allStruct = [...new Set(history.flatMap(x => x.structuralFlags || []))]
+    return allStruct.filter((f) => {
+      const need = (f === 'dialogue_sandwich' || f === 'verb_triple_parallel') ? 2 : 3
+      return history.filter(x => (x.structuralFlags || []).includes(f)).length >= need
+    })
   }
 
   // 宿主 gameSettings 上限為 1–20 項；此處保留核心 12 項，完整 19 項分頁與 ? 說明請使用輸入列「校對設定」面板
@@ -1911,9 +1965,8 @@ export function apply(ctx) {
           }
 
           let structuralFlags = []
-          if (cfg.narrativeSteering === 'inject' && history.length >= 3) {
-            const allStruct = [...new Set(history.flatMap(h => h.structuralFlags || []))]
-            structuralFlags = allStruct.filter(f => history.filter(h => (h.structuralFlags || []).includes(f)).length >= 3)
+          if (cfg.narrativeSteering === 'inject' && history.length >= 2) {
+            structuralFlags = pickRecurringStructuralFlags(history)
           }
 
           return buildTurnConstraintHint(recurring, cfg.mode || 'standard', {

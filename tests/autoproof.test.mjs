@@ -326,10 +326,25 @@ test('v1.33 品質強化：精準定位、動態對照範例、Best-of-N 評分�
   assert.equal(s.cooldownPool, 'report')
   assert.equal(s.narrativeSteering, 'inject')
 
-  // 7. 簡繁詞組補齊（嘴里/喉嚨里/帶着/壓着）＋ 去除寫死古風人名例句
-  const phraseOut = applyCharFixes('她嘴里含着水，喉嚨里壓着聲音，帶着笑意看過來。', { enablePhrases: true, toScript: 'trad' })
-  assert.equal(phraseOut.text, '她嘴裡含著水，喉嚨裡壓著聲音，帶著笑意看過來。')
+  // 7. 簡繁詞組補齊（嘴里/喉嚨里/耳朵里/杯里/隊里/帶着/壓着/团/一分鍾/通道里/半形逗號）＋ 去除寫死古風人名例句
+  const phraseOut = applyCharFixes('她嘴里含着水，耳朵里塞著耳機，杯里是溫水，隊里抓成一团，一分鍾後在通道里低頭,便笑了。', { enablePhrases: true, toScript: 'trad' })
+  assert.equal(phraseOut.text, '她嘴裡含著水，耳朵裡塞著耳機，杯裡是溫水，隊裡抓成一團，一分鐘後在通道裡低頭，便笑了。')
   const sysPrompt = buildRewriteSystem('trad', '', 'deep')
   assert.equal(sysPrompt.includes('藍曦臣'), false)
   assert.equal(sysPrompt.includes('景儀'), false)
+
+  // 8. 三明治對話模板與動詞三連排比偵測＋提醒
+  const swText = [
+    '「你砍袁柏清那兩步，砍許斌的背，砍王不留行出來救人的那一下。」',
+    '「他收手那件事我哥也幹過。」她說話很平，手卻把帽衫抓成一團，「我哥那兩場我都在場邊。」',
+    '「我在樓下翻了半小時舊檔案。」她把照片一張張攤開，「這上面是方士謙。」',
+  ].join('\n')
+  const swFp = analyzeTurnNarrativeFingerprint(swText)
+  assert.ok(swFp.dialogueSandwichCount >= 2)
+  assert.ok(swFp.verbTripleCount >= 1)
+  assert.ok(swFp.flags.includes('dialogue_sandwich'))
+  assert.ok(swFp.flags.includes('verb_triple_parallel'))
+  const swHint = buildTurnConstraintHint([], 'standard', { structuralFlags: swFp.flags })
+  assert.ok(swHint.includes('三明治格式'))
+  assert.ok(swHint.includes('三連排比'))
 })
