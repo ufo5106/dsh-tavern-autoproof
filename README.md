@@ -56,12 +56,19 @@
 
 ## 安裝與使用
 
-1. 將專案資料夾放入 DSH Tavern 的 `data/plugins/dsh-tavern-autoproof` 目錄並於酒館插件管理啟用（從舊版更新後請重載插件或重啟酒館）。
-2. 在對話輸入列上方點擊 **`校對設定`**：
+### 安裝方式
+1. **推薦（DSH Tavern 一鍵安裝）**：打開 DSH Tavern「設定 → 酒館插件」，將本專案 GitHub 地址直接貼入「給酒館加功能：貼上插件作者的 GitHub 地址，或上傳 ZIP 安裝包」欄位即可完成安裝：
+   ```text
+   https://github.com/ufo5106/dsh-tavern-autoproof
+   ```
+   亦可從 [Releases](https://github.com/ufo5106/dsh-tavern-autoproof/releases) 下載 ZIP 安裝包上傳，或手動放入 `data/plugins/dsh-tavern-autoproof` 目錄（從舊版更新後請於插件管理重載或重啟酒館）。
+
+### 使用方式
+1. 在對話輸入列上方點擊 **`校對設定`**：
    - **「純本地淨化 🟢」**：確認「實體專有名詞鎖」、「知而不言邊界」與「高頻動作冷卻池／StoryScope」。
    - **「線上改寫與保護 🟡」**：確認「對話與角色口癖保護區（推薦選 `智能放行`）」與 NSFW 分流／輸出路由。
    - **「正面文風 ✨」**：可上傳 `.txt`／`.md` 小說檔自動全書萃取正面文風錨點（建議點 **「儲存至本角色卡」**），並可按需開啟 `Verbalized Sampling`。
-3. 點擊訊息下方 **`校對`** 或輸入列 **`重新校對`**，即可檢視三分區完整報告；剛調整正面文風或 Verbalized Sampling 後，對該輪按 **重新生成（Re-roll）** 或開下一輪更能直接體驗生成前引導差異。
+2. 點擊訊息下方 **`校對`** 或輸入列 **`重新校對`**，即可檢視三分區完整報告；剛調整正面文風或 Verbalized Sampling 後，對該輪按 **重新生成（Re-roll）** 或開下一輪更能直接體驗生成前引導差異。
 
 ---
 
