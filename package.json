@@ -1,7 +1,7 @@
 {
   "name": "dsh-tavern-autoproof",
-  "version": "1.34.0",
-  "description": "DSH Tavern 自動校對與去 AI 文體插件（v1.34.0：手機版設定／報告 UI 適配 + 三明治對話／三連排比偵測提醒 + 常見「名詞+里」與漏字補齊）",
+  "version": "1.35.0",
+  "description": "DSH Tavern 自動校對與去 AI 文體插件（v1.35.0：正面文風卡＋整本小說上傳萃取 + Verbalized Sampling + 實體名詞鎖 + 知而不言邊界 + 智能對白去 AI 味與防照抄重試 + 三分區報告）",
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs"

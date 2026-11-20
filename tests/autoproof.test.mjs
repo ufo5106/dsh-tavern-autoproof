@@ -125,6 +125,7 @@ test('runOfflineProof 與宿主生命周期：versionSignal 與 saveTurnData 去
   const savedTurnMap = new Map()
   let editCalls = 0
   const mockCtx = {
+    _disableLog: true,
     tavern: {
       apiVersion: 7,
       gameSettings() {},
@@ -347,4 +348,267 @@ test('v1.33 品質強化：精準定位、動態對照範例、Best-of-N 評分�
   const swHint = buildTurnConstraintHint([], 'standard', { structuralFlags: swFp.flags })
   assert.ok(swHint.includes('三明治格式'))
   assert.ok(swHint.includes('三連排比'))
+})
+
+test('v1.35 無微調品質提升：實體名詞鎖、角色知識與台詞邊界門、正面文風卡與口頭取樣', async () => {
+  const {
+    parseCustomEntityRules,
+    extractCardOmissionLocks,
+    applyEntityLocks,
+    detectInfoDumpDialogue,
+    buildTurnConstraintHint,
+    normalizeSettings,
+  } = __test
+
+  // 1. 自訂實體映射表解析（支援 = / -> / =>，過濾單字與註解）
+  const customRules = parseCustomEntityRules('# comment\n亞里斯多=亞里斯多德\n黑森林谷->黑森林山谷\n銀月騎士=>銀月騎士團\n壞=好\n林深=林深')
+  assert.equal(customRules.length, 3)
+  assert.equal(customRules[0].from, '亞里斯多')
+  assert.equal(customRules[0].to, '亞里斯多德')
+  assert.equal(customRules[2].to, '銀月騎士團')
+
+  // 2. 角色卡專有名詞自動缺字鎖（支援 card.name／keys／括號詞彙，僅鎖 4~6 字詞且跳過卡片內已存在的近似詞）
+  const autoLocks = extractCardOmissionLocks({
+    name: '阿爾托莉雅',
+    description: '林深與林淺相識，守衛著『聖殿騎士團』的古塔。',
+    character_book: { entries: [{ keys: ['翡翠高塔'], content: '『翡翠高塔』位於北境。' }] },
+  })
+  assert.ok(autoLocks.some((r) => r.from === '阿爾莉雅' && r.to === '阿爾托莉雅'))
+  assert.ok(autoLocks.some((r) => r.from === '聖殿士團' && r.to === '聖殿騎士團'))
+  assert.ok(autoLocks.some((r) => r.from === '翡翠塔' && r.to === '翡翠高塔'))
+  // 2 字近似雙名不應互相替換
+  assert.equal(autoLocks.some((r) => r.from === '林淺' || r.to === '林淺'), false)
+
+  const locked = applyEntityLocks('亞里斯多走在翡翠塔下，問銀月騎士與銀月騎士團的聖殿士團在哪。', [...customRules, ...autoLocks])
+  assert.equal(locked.total, 4)
+  assert.equal(locked.text, '亞里斯多德走在翡翠高塔下，問銀月騎士團與銀月騎士團的聖殿騎士團在哪。')
+
+  // 3. 角色知識與台詞邊界門（通用多題材：歷史／奇幻／校園設定科普對話偵測）
+  const dumpHitFantasy = detectInfoDumpDialogue('「這座組織三百年前就創立了，按照這裡的規矩只有長老能進內殿。」他平靜地說。')
+  assert.equal(dumpHitFantasy.count, 1)
+  const dumpHitCampus = detectInfoDumpDialogue('「全校都知道他當年其實在1998年創立這個社團時就定下規矩。」')
+  assert.equal(dumpHitCampus.count, 1)
+  const cleanHit = detectInfoDumpDialogue('「門鎖還沒換，今晚別走正門。」\n「收到，我在後巷等。」')
+  assert.equal(cleanHit.count, 0)
+
+  // 4. 正面文風卡、口頭取樣與邊界門獨立注入 buildTurnConstraintHint（即使無違規也要生成）
+  const styleHint = buildTurnConstraintHint([], 'standard', {
+    utteranceGateActive: true,
+    styleCardText: '人物多用動詞與短句推進，對話直給當下反應。',
+    verbalizedSampling: true,
+  })
+  assert.ok(styleHint.includes('【正面文風參考（Style Card）】'))
+  assert.ok(styleHint.includes('人物多用動詞與短句推進'))
+  assert.ok(styleHint.includes('【知而不言邊界】'))
+  assert.ok(styleHint.includes('Verbalized Sampling'))
+
+  // 5. v1.35 新增設定正規化
+  const s35 = normalizeSettings({
+    entityLockMode: 'off',
+    customEntityFixes: '亞里斯多=亞里斯多德',
+    utteranceGate: 'always',
+    styleCardEnabled: true,
+    styleCardText: '白描短句為主',
+    verbalizedSampling: true,
+  })
+  assert.equal(s35.entityLockMode, 'off')
+  assert.equal(s35.customEntityFixes, '亞里斯多=亞里斯多德')
+  assert.equal(s35.utteranceGate, 'always')
+  assert.equal(s35.styleCardEnabled, true)
+  assert.equal(s35.styleCardText, '白描短句為主')
+  assert.equal(s35.verbalizedSampling, true)
+
+  // 6. 整本小說分層採樣與客觀語言指紋統計
+  const { analyzeAndSampleNovel } = __test
+  const chapters = []
+  for (let c = 1; c <= 40; c++) {
+    chapters.push(`第${c}章 路上`)
+    for (let p = 0; p < 8; p++) {
+      chapters.push('「把燈關掉。」他把鑰匙扔上桌面。')
+      chapters.push('「太亮了睡不著。」門外雨聲不大，屋檐偶爾滴下一串水珠。')
+    }
+  }
+  const bigBook = chapters.join('\n')
+  const sampledBook = analyzeAndSampleNovel(bigBook, { maxTotalChars: 3600, sliceCount: 5 })
+  assert.ok(sampledBook.totalChars > 10000)
+  assert.ok(sampledBook.statsSummary.includes('對話行佔比'))
+  assert.ok(sampledBook.statsSummary.includes('平均句長'))
+  assert.equal(sampledBook.sliceCount, 5)
+  assert.ok(sampledBook.excerpt.includes('採樣片段 1'))
+  assert.ok(sampledBook.excerpt.includes('採樣片段 5'))
+  assert.equal(sampledBook.excerpt.includes('第1章 路上'), false)
+
+  // 7. 報告面板 features 與生成前注入紀錄完整回報（端對端模擬）
+  let turnSectionFn = null
+  let settledFn = null
+  const handlers = new Map()
+  const mockCtx2 = {
+    _disableLog: true,
+    llm: {
+      async prepareCall() {
+        return {
+          config: {},
+          async *stream() {
+            yield { type: 'text-delta', text: '叙述节奏明快，短句收束干脆，"动作"描写克制。' }
+          },
+        }
+      },
+    },
+    tavern: {
+      apiVersion: 7,
+      gameSettings() {},
+      turnSection(spec) { turnSectionFn = spec.text },
+      onTurnSettled(fn) { settledFn = fn },
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { handlers.set(name, fn) },
+      async backgroundModel() { return { provider: 'mock', model: 'mock-flash' } },
+      async getGameSettings() { return { enabled: true, tier2: false, mode: 'standard', script: 'auto' } },
+      async getCard() { return { name: '聖殿騎士團', description: '『聖殿騎士團』成立多年。' } },
+      async getTurnState() { return { turn: 1 } },
+      async readTurnData() { return null },
+      async saveTurnData() {},
+      async editTurn({ text }) { return { textVersion: 'v2', text } },
+    },
+  }
+  apply(mockCtx2)
+  await handlers.get('dsh-tavern-autoproof/save-settings')({
+    gameId: 'g-rpt',
+    scope: 'game',
+    settings: {
+      styleCardEnabled: true,
+      styleCardText: '對話簡短有力，動作只寫結果。',
+      verbalizedSampling: true,
+      customEntityFixes: '亞里斯多=亞里斯多德',
+      tier2: false,
+    },
+  })
+  const injected = await turnSectionFn({ gameId: 'g-rpt' })
+  assert.ok(injected.includes('正面文風參考'))
+  assert.ok(injected.includes('Verbalized Sampling'))
+  await settledFn({
+    gameId: 'g-rpt',
+    turn: 1,
+    textVersion: 'v1',
+    rawText: '亞里斯多看著聖殿士團說：「這座組織三百年前就創立了，按照這裡的規矩只有長老能進。」',
+  })
+  const rpt = await handlers.get('dsh-tavern-autoproof/report')({ gameId: 'g-rpt', turn: 1 })
+  assert.equal(rpt.features.styleCardGenUsed, true)
+  assert.equal(rpt.features.verbalizedSampling, true)
+  assert.equal(rpt.features.entityLockTotal, 2)
+  assert.equal(rpt.features.entityLockDetail.length, 2)
+  assert.equal(rpt.features.infoDumpCount, 1)
+  assert.equal(rpt.features.styleCardChars > 0, true)
+
+  // 8. 萃取正面文風卡自動對齊卡面繁簡並清理引號；冷卻池命中擴充微動作
+  const extRes = await handlers.get('dsh-tavern-autoproof/extract-style')({
+    gameId: 'g-rpt',
+    sampleText: '夜色微涼，他站定看了一會兒街角，推開木門走了進去。'.repeat(3),
+  })
+  assert.equal(extRes.ok, true)
+  assert.equal(extRes.toScript, 'trad')
+  assert.ok(extRes.styleCard.includes('敘述節奏明快'))
+  assert.ok(extRes.styleCard.includes('「動作」'))
+
+  const micro2 = __test.extractTurnMicroActions('他挑了挑眉，抿了抿唇，眸色一暗。')
+  assert.equal(micro2.counts['挑了挑眉'], 1)
+  assert.equal(micro2.counts['抿了抿唇'], 1)
+  assert.equal(micro2.counts['眸色一暗'], 1)
+
+  // 9. 智能對白保護區：保留簡短自然口癖，但放行翻譯腔／三明治／長說教對白給 Tier 2
+  const { isDialogueProtectedParagraph, analyzeDialogueAiFlavor, locateParagraphIssues, numberedSegments } = __test
+  assert.equal(normalizeSettings({ protectDialogue: true }).protectDialogue, 'smart')
+  assert.equal(normalizeSettings({ protectDialogue: false }).protectDialogue, 'off')
+  assert.equal(normalizeSettings({ protectDialogue: 'strict' }).protectDialogue, 'strict')
+
+  assert.equal(isDialogueProtectedParagraph('「我不擦！」', 'smart'), true)
+  assert.equal(isDialogueProtectedParagraph('「你必須明白，我們別無選擇。」', 'smart'), false)
+  assert.equal(isDialogueProtectedParagraph('「你必須明白，我們別無選擇。」', 'strict'), true)
+  assert.equal(isDialogueProtectedParagraph('「那件事過去了。」她說話很平，手卻攥緊了袖口，「別再提了。」', 'smart'), false)
+
+  const dlgFlavor = analyzeDialogueAiFlavor('「不是因為怕，而是你必須明白我們別無選擇。」')
+  assert.equal(dlgFlavor.hasAiFlavor, true)
+  assert.ok(dlgFlavor.reasons.includes('dialogue_antithesis'))
+  assert.ok(dlgFlavor.reasons.includes('dialogue_translationese'))
+
+  const smartSpans = locateParagraphIssues('「不是因為怕，而是我們別無選擇。」他點頭走了。', ['dialogue_ai_tone'], { protectDialogue: 'smart' })
+  assert.ok(smartSpans.some((s) => s.startsWith('[對白AI腔]')))
+
+  // 10. 隱性格言對舉（不X了。我Y。／V的是A。V的是B。／錯在你以為）、機械遞進與無意義複位動作偵測
+  const subtleAiText = '「我明天不畫線條了。我畫人。」「學的是死招。他打的是人。」「沒錯，錯在你以為只有八道。」「把那八個圈重畫。第九個我明天來要。」她把手套摘下來，又套回去。'
+  const subtleFlavor = analyzeDialogueAiFlavor(subtleAiText)
+  assert.equal(subtleFlavor.hasAiFlavor, true)
+  assert.ok(subtleFlavor.reasons.includes('dialogue_implicit_contrast'))
+  assert.ok(subtleFlavor.reasons.includes('dialogue_mechanical_enum'))
+  assert.ok(subtleFlavor.reasons.includes('fidget_reverse_loop'))
+  const subtleSpans = locateParagraphIssues(subtleAiText, ['dialogue_ai_tone'], { protectDialogue: 'smart' })
+  assert.ok(subtleSpans.some((s) => s.includes('摘下來，又套回去')))
+  assert.ok(subtleSpans.some((s) => s.includes('不畫線條了')))
+
+  const segList = numberedSegments(
+    splitSegments('「我不擦！」\n「你必須明白，這不是逃避，而是我們別無選擇。」'),
+    false,
+    [],
+    { mode: 'standard' }
+  )
+  assert.equal(segList.length, 1)
+  assert.ok(segList[0].findings.includes('dialogue_ai_tone'))
+
+  // 11. Anti-lazy-copy 防偷懶照抄重試：模型第一次原句照搬已確診 AI 腔時自動糾偏重試
+  let tier2CallCount = 0
+  let writtenText = ''
+  const lazyHandlers = new Map()
+  const mockCtxLazy = {
+    _disableLog: true,
+    llm: {
+      async prepareCall() {
+        return {
+          config: {},
+          async *stream() {
+            tier2CallCount += 1
+            if (tier2CallCount === 1) {
+              // 第一次模擬模型偷懶原句照抄
+              yield { type: 'text-delta', text: '「不畫線條了。我畫人。」她把手套摘下來，又套回去，慢慢坐在椅子上。' }
+            } else {
+              // 收到強制改寫通知後實質去 AI 味
+              yield { type: 'text-delta', text: '「不光背那些線了，看人吧。」她摘下手套擱到一邊，慢慢坐在椅子上。' }
+            }
+          },
+        }
+      },
+    },
+    tavern: {
+      apiVersion: 7,
+      gameSettings() {},
+      turnSection() {},
+      onTurnSettled() {},
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { lazyHandlers.set(name, fn) },
+      async backgroundModel() { return { provider: 'mock', model: 'mock-flash' } },
+      async getGameSettings() { return { enabled: true, tier2: true, tier2Route: 'text', protectDialogue: 'smart', mode: 'standard', script: 'trad' } },
+      async getCard() { return { name: '林深', description: '現代故事。' } },
+      async getTurnState() { return { turn: 5 } },
+      async getTurn() {
+        return {
+          turn: 5,
+          textVersion: 'v1',
+          rawText: '「不畫線條了。我畫人。」她把手套摘下來，又套回去，慢慢坐在椅子上。',
+        }
+      },
+      async readTurnData() { return null },
+      async saveTurnData() {},
+      async editTurn({ text }) {
+        writtenText = text
+        return { textVersion: 'v2', text }
+      },
+    },
+  }
+  apply(mockCtxLazy)
+  const rptLazy = await lazyHandlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-lazy', turn: 5 })
+  assert.equal(tier2CallCount, 2)
+  assert.equal(rptLazy.writeOk, true)
+  assert.equal(rptLazy.tier2.lazyRetries, 1)
+  assert.ok(rptLazy.tier2.spansFixed >= 2)
+  assert.ok(writtenText.includes('不光背那些線了'))
 })
