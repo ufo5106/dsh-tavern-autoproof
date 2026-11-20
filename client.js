@@ -134,8 +134,11 @@ window.__ModuleLoader__.load({
               value: String(val ?? field.default ?? ''),
               onChange: (e) => updateField(field.key, e.target.value),
               style: {
-                maxWidth: '250px',
-                padding: '5px 8px',
+                width: '100%',
+                maxWidth: '260px',
+                minWidth: '150px',
+                boxSizing: 'border-box',
+                padding: '6px 8px',
                 borderRadius: '6px',
                 border: '1px solid rgba(148,163,184,0.35)',
                 background: '#0f172a',
@@ -167,10 +170,10 @@ window.__ModuleLoader__.load({
           },
           h(
             'div',
-            { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' } },
+            { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
             h(
               'div',
-              { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1, minWidth: 0 } },
+              { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: '1 1 200px', minWidth: 0 } },
               h('span', { style: { fontSize: '13px', fontWeight: 600 } }, field.label),
               h(
                 'button',
@@ -239,33 +242,34 @@ window.__ModuleLoader__.load({
         'div',
         {
           style: {
-            maxWidth: '640px',
-            margin: '4vh auto',
-            padding: '18px 20px',
+            display: 'block',
+            width: 'min(640px, calc(100vw - 24px))',
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            margin: '16px auto',
+            padding: '16px',
             borderRadius: '12px',
             background: 'var(--gal-ui-surface, #1e293b)',
             color: 'var(--gal-ui-ink, #f8fafc)',
             boxShadow: '0 22px 50px rgba(0,0,0,0.52)',
-            maxHeight: '88vh',
-            display: 'flex',
-            flexDirection: 'column',
           },
         },
         h(
           'div',
-          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } },
-          h('h3', { style: { margin: 0, fontSize: '16px' } }, 'AutoProof v1.33 校對設定（點擊 ? 查看功能說明）'),
+          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
+          h('h3', { style: { margin: 0, fontSize: '15px', lineHeight: 1.35 } }, 'AutoProof v1.33 校對設定（點 ? 看說明）'),
           h(
             'button',
             {
               onClick: close,
               style: {
-                padding: '2px 8px',
+                padding: '4px 10px',
                 borderRadius: '6px',
                 border: '1px solid rgba(148,163,184,0.3)',
                 background: 'transparent',
                 color: 'inherit',
                 cursor: 'pointer',
+                flexShrink: 0,
               },
             },
             '✕'
@@ -282,13 +286,14 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 onClick: () => setActiveTab(t.id),
                 style: {
-                  padding: '6px 12px',
+                  padding: '6px 10px',
                   borderRadius: '8px',
                   border: activeTab === t.id ? '1px solid #38bdf8' : '1px solid rgba(148,163,184,0.25)',
                   background: activeTab === t.id ? 'rgba(56, 189, 248, 0.18)' : 'rgba(15, 23, 42, 0.35)',
                   color: activeTab === t.id ? '#7dd3fc' : '#cbd5e1',
                   fontSize: '12px',
                   fontWeight: 600,
+                  whiteSpace: 'nowrap',
                   cursor: 'pointer',
                 },
               },
@@ -298,7 +303,7 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { overflowY: 'auto', flex: 1, paddingRight: '2px' } },
+          { style: { overflowY: 'auto', maxHeight: '58vh', paddingRight: '2px' } },
           loading
             ? h('div', { style: { padding: '20px', textAlign: 'center', opacity: 0.75, fontSize: '13px' } }, '載入設定中…')
             : tabFields.map(renderFieldRow)
@@ -342,7 +347,7 @@ window.__ModuleLoader__.load({
           ),
           h(
             'div',
-            { style: { display: 'flex', gap: '8px' } },
+            { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
             h(
               'button',
               {
@@ -350,12 +355,13 @@ window.__ModuleLoader__.load({
                 disabled: saving,
                 onClick: () => handleSave('global'),
                 style: {
-                  padding: '6px 12px',
+                  padding: '6px 10px',
                   borderRadius: '6px',
                   border: '1px solid rgba(56, 189, 248, 0.45)',
                   background: 'rgba(56, 189, 248, 0.14)',
                   color: '#7dd3fc',
                   fontSize: '12px',
+                  whiteSpace: 'nowrap',
                   cursor: 'pointer',
                 },
               },
@@ -368,13 +374,14 @@ window.__ModuleLoader__.load({
                 disabled: saving,
                 onClick: () => handleSave('game'),
                 style: {
-                  padding: '6px 14px',
+                  padding: '6px 12px',
                   borderRadius: '6px',
                   border: 'none',
                   background: '#10b981',
                   color: '#fff',
                   fontSize: '12px',
                   fontWeight: 600,
+                  whiteSpace: 'nowrap',
                   cursor: 'pointer',
                 },
               },
@@ -386,12 +393,13 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 onClick: close,
                 style: {
-                  padding: '6px 12px',
+                  padding: '6px 10px',
                   borderRadius: '6px',
                   border: '1px solid rgba(148,163,184,0.35)',
                   background: 'transparent',
                   color: 'inherit',
                   fontSize: '12px',
+                  whiteSpace: 'nowrap',
                   cursor: 'pointer',
                 },
               },
@@ -637,9 +645,11 @@ window.__ModuleLoader__.load({
         'div',
         {
           style: {
-            maxWidth: '580px',
-            margin: '5vh auto',
-            padding: '20px',
+            width: 'min(580px, calc(100vw - 24px))',
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            margin: '16px auto',
+            padding: '16px',
             borderRadius: '12px',
             background: 'var(--gal-ui-surface, #1e293b)',
             color: 'var(--gal-ui-ink, #f8fafc)',
