@@ -1,11 +1,11 @@
 # dsh-tavern-autoproof
 
-給 [DSH Tavern](https://github.com/flizzywine/dsh-tavern) 使用的中文小說自動校對與去 AI 味插件（**v1.33.0**）。  
-針對長篇互動小說與 NSFW 劇本的痛點設計：**純本地 0-Token 淨化與小說體檢 ＋ 逐段 NSFW 安全分流 ＋ Tier 2 工具調用通道 ＋ 精準定位與 Best-of-N 擇優 ＋ 跨輪冷卻與結構糾偏**，讓你在不觸發雲端審查截斷的前提下，穩定提升小說寫作質感。
+給 [DSH Tavern](https://github.com/flizzywine/dsh-tavern) 使用的中文小說自動校對與去 AI 味插件（**v1.34.0**）。  
+針對長篇互動小說與 NSFW 劇本的痛點設計：**純本地 0-Token 淨化與小說體檢 ＋ 逐段 NSFW 安全分流 ＋ Tier 2 工具調用通道 ＋ 精準定位與跨輪結構糾偏 ＋ 桌面／手機響應式設定介面**，讓你在不觸發雲端審查截斷的前提下，穩定提升小說寫作質感。
 
 ---
 
-## v1.33.0 核心亮點
+## v1.34.0 核心亮點
 
 1. **Tier 2 品質強化（精準定位 ＋ 動態範例 ＋ Best-of-N 本地擇優）**
    - **精準病灶定位反饋 (`targetedFeedback`)**：送交 Tier 2 前先在本地抽出確切命中片段（自動跳過引號內對白），讓模型只修改問題局部。

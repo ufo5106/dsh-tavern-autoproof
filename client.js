@@ -257,7 +257,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
-          h('h3', { style: { margin: 0, fontSize: '15px', lineHeight: 1.35 } }, 'AutoProof v1.33 校對設定（點 ? 看說明）'),
+          h('h3', { style: { margin: 0, fontSize: '15px', lineHeight: 1.35 } }, 'AutoProof v1.34 校對設定（點 ? 看說明）'),
           h(
             'button',
             {
@@ -658,7 +658,7 @@ window.__ModuleLoader__.load({
             overflowY: 'auto',
           },
         },
-        h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `AutoProof v1.33 校對報告（第 ${turn} 輪）`),
+        h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `AutoProof v1.34 校對報告（第 ${turn} 輪）`),
         h('div', null, ...rows),
         report.writeError
           ? h(
