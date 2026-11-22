@@ -27,10 +27,43 @@ import {
   analyzeTurnNarrativeFingerprint,
   parseCustomEntityRules,
   extractCardOmissionLocks,
+  extractCardProperNouns,
+  detectLikelyProperNouns,
+  isCooldownExcludedTerm,
   applyEntityLocks,
   detectInfoDumpDialogue,
   analyzeAndSampleNovel,
   analyzeDialogueAiFlavor,
+  CONFUSABLE_CHARS,
+  calcBigramJaccard,
+  WHITELIST_MASK_CHAR,
+  parseWhitelistLines,
+  maskWhitelistSpans,
+  extractDynamicImagery,
+  extractStyleAnchorsFromText,
+  rotateSampleAnchors,
+  parseCharacterVoices,
+  clauseHits,
+  checkVoiceConsistency,
+  formatVoiceInjectionBlock,
+  serializeCharacterVoices,
+  splitExtractStyleSections,
+  findSpeechObjDefects,
+  scanWindowClusters,
+  scanSyntaxAndTranslationese,
+  calcSentenceIsomorphism,
+  detectListLikePrefixRun,
+  estimateBigramMtld,
+  detectSynonymSwaps,
+  countParagraphCohesionChain,
+  detectEmbodiedOverload,
+  calcFunctionCharRatio,
+  hasGenuineImperfection,
+  calcContentOverlap,
+  preCleanNarrativeFillers,
+  calcAiConcentration,
+  detectModelFamily,
+  checkAddressConsistency,
 } from './lib/local-rules.mjs'
 
 export const name = 'dsh-tavern-autoproof'
@@ -985,6 +1018,12 @@ export const REWRITE_CANDIDATES = [
     re: /聞聲|闻声|見狀|见状|不禁|頓時|顿时|意味深長|意味深长|若有所思|緩緩說道|缓缓说道|缓缓开口|緩緩開口/g },
   { key: 'stray_english', label: '中文敘事殘留英文詞彙',
     re: /[\u4e00-\u9fff]\s*[a-zA-Z]{3,12}\s*[\u4e00-\u9fff，。！？]/g },
+  { key: 'speech_obj_defect', label: '言說動詞賓語被物件頂替語病',
+    re: /(?:把|將|将)[^，。！？；、\s]{2,16}?(?:喊|嚷|吼|吆喝|說|说|講|讲|念|告訴|告诉|宣布)(?:了|著|着|過|过)[^，。！？；、\s]{0,4}?(?:街|巷|村|鎮|镇|城|院|樓|楼|路)/g },
+  { key: 'syntax_translationese', label: '敘事句法翻譯腔殼（當…時／對於…而言／以一種…的方式）',
+    re: /(?:(?:^|[，。！？\n])\s*[當当][^，。！？\n]{2,18}(?<!的時候|的时候)[時时][，,]|(?:對於|对于|關於|关于)[^，。！？\n]{1,14}(?:來說|来说|而言)|在[^，。！？\n]{2,18}的(?:過程中|过程中|情況下|情况下)|以一[種种][^，。！？\n]{2,12}的(?:方式|形式))/g },
+  { key: 'padding_verb_chain', label: '雙音節膨脹動詞殼（進行討論／加以說明／做出決定）',
+    re: /(?:(?:進行|进行)(?:了)?(?:討論|讨论|分析|溝通|沟通|對話|对话|調查|调查|解釋|解释|整理|處理|处理|觀察|观察|試探|试探)|(?:加以|予以)(?:說明|说明|處理|处理|安撫|安抚|制止|拒絕|拒绝)|(?:做出|作出)(?:了)?(?:決定|决定|選擇|选择|回應|回应|讓步|让步))/g },
   { key: 'dialogue_ai_tone', label: '對白書面／翻譯／說教腔或三明治模板',
     re: /(?:[「『“"][^「」『』“”"\n]{1,120}[」』”"]\s*(?:[^「」『』“”"\n]{2,45}[，,]\s*[「『“"]|(?:她|他|它)?(?:說話|说话|語氣|语气)很[平淡冷靜輕][^「」『』“”"\n]{2,36}[「『“"])|[「『“"][^「」『』“”"\n]{0,80}(?:別無選擇|别无选择|你必須明白|你必须明白|問題(?:並)?不在於|问题(?:并)?不在于|我向你保證|我向你保证|所謂的[^，。！？]{1,10}(?:就是|其實)|你永遠不會懂|你永远不会懂)[^「」『』“”"\n]{0,80}[」』”"])/g },
 ]
@@ -1075,30 +1114,37 @@ export function candidateKeys(text, options = {}) {
   }
   const found = []
   for (const rule of [...REWRITE_CANDIDATES, ...RECURRING_CANDIDATES]) {
+    if (rule.key === 'speech_obj_defect') continue
     rule.re.lastIndex = 0
     if (rule.re.test(source)) found.push(rule.key)
   }
+  if (findSpeechObjDefects(source).length > 0) found.push('speech_obj_defect')
+  const iso = calcSentenceIsomorphism(source)
+  if (iso.tripleCount >= 1 || iso.pairCount >= 2) found.push('isomorphic_rhythm')
+  if (detectListLikePrefixRun(source).runs.length >= 1) found.push('list_prefix_run')
   if (!found.includes('dialogue_ai_tone') && analyzeDialogueAiFlavor(source).hasAiFlavor) {
     found.push('dialogue_ai_tone')
   }
   return found
 }
 
-// v1.23：三檔模式真正分級——保守只跑 P0（對舉／動作／字級），標準加 P1（量化／疊詞／三段式），積極再加弱信號
+// v1.23：三檔模式真正分級——保守只跑 P0（對舉／動作／字級），標準加 P1（量化／疊詞／三段式／翻譯腔），積極再加弱信號
 const MODE_KEYS = Object.freeze({
   // P0：直接破壞閱讀的重句與生成式習慣
   conservative: new Set([
     'paired_reversal', 'omitted_antithesis', 'flip_inversion', 'negated_opener',
     'action_inflation', 'action_chain', 'ledger_metaphor', 'meta_claim', 'self_recall', 'concede_echo',
     'degree_abstract', 'tail_comment', 'silence_pad', 'no_turn_back',
-    'repeat_degree', 'ordinal_list', 'cliche', 'stray_english', 'dialogue_ai_tone',
+    'repeat_degree', 'ordinal_list', 'cliche', 'stray_english', 'dialogue_ai_tone', 'speech_obj_defect',
+    'syntax_translationese', 'padding_verb_chain',
   ]),
   // P1：語氣／量化／節奏類
   standard: new Set([
     'paired_reversal', 'omitted_antithesis', 'flip_inversion', 'negated_opener',
     'action_inflation', 'action_chain', 'comma_chain', 'ledger_metaphor', 'meta_claim', 'self_recall', 'concede_echo',
     'degree_abstract', 'tail_comment', 'silence_pad', 'no_turn_back',
-    'repeat_degree', 'ordinal_list', 'cliche', 'stray_english', 'dialogue_ai_tone',
+    'repeat_degree', 'ordinal_list', 'cliche', 'stray_english', 'dialogue_ai_tone', 'speech_obj_defect',
+    'syntax_translationese', 'padding_verb_chain', 'isomorphic_rhythm', 'list_prefix_run',
     'quantification', 'taxonomy_emotion', 'over_degree', 'litotes_steady', 'degree_cluster',
     'paraphrase_count', 'exact_count', 'comparative_virtue', 'self_reveal', 'reveal_prop',
     'reduplication_cluster', 'redundant_emotion', 'three_part_formula',
@@ -1174,13 +1220,26 @@ function buildParagraphGuidance(keys) {
   if (keys.includes('exact_count')) {
     tips.push('避免同一段內重複寫「看了三遍」「推了半尺」「兩根手指」這類刻板精確次數或尺度，改為更自然流暢的日常描寫。')
   }
+  if (keys.includes('speech_obj_defect')) {
+    tips.push('本段把具體物件直接當成言說動詞（喊／說／嚷）的賓語，讀起來語病卡頓；請補全「要傳達的事情內容」再接喊／說。')
+  }
+  if (keys.includes('syntax_translationese')) {
+    tips.push('本段含有歐化句法翻譯腔（「當…時」「對於…來說」「在…的過程中」「以一種…的方式」），請刪去前置虛殼，改為直接主謂推進（口語「的時候」可保留）。')
+  }
+  if (keys.includes('padding_verb_chain')) {
+    tips.push('請把雙音節膨脹動詞殼（「進行討論／加以說明／予以處理／做出決定」）精簡為直接俐落的單動詞（「商量／說明／處理／決定」）。')
+  }
+  if (keys.includes('isomorphic_rhythm') || keys.includes('list_prefix_run')) {
+    tips.push('本段出現相鄰句字數／逗號節拍器同構或連三句同字開頭列表感，請打散其中一句的語序或長短節奏，保留原有人稱與事實。')
+  }
   return tips.join(' ')
 }
 
 const P0_PRIORITY_KEYS = new Set([
   'paired_reversal', 'omitted_antithesis', 'flip_inversion', 'negated_opener',
   'action_inflation', 'action_chain', 'ledger_metaphor', 'taxonomy_emotion',
-  'redundant_emotion', 'stray_english', 'dialogue_ai_tone',
+  'redundant_emotion', 'stray_english', 'dialogue_ai_tone', 'speech_obj_defect',
+  'syntax_translationese', 'padding_verb_chain', 'isomorphic_rhythm',
 ])
 
 const DEFAULT_MAX_SEGMENTS = Object.freeze({
@@ -1207,14 +1266,17 @@ export function numberedSegments(segs, forceAll = false, activeKeys = [], option
     if (segs[i].type === 'text') textIndexes.push(i)
   }
 
+  const wl = Array.isArray(options.whitelist) ? options.whitelist : []
   const candidates = []
   for (const i of textIndexes) {
     const seg = segs[i]
     const body = seg.content.trim()
     if (!body || hanzi(body) < 3) continue
-    if (!forceAll && isProtectedLine(body)) continue
+    // 只在掃描口徑使用等長掩碼（絕不觸及 seg.content 原文）
+    const scanBody = wl.length ? maskWhitelistSpans(body, wl).text : body
+    if (!forceAll && isProtectedLine(scanBody)) continue
 
-    const rawKeys = candidateKeys(body)
+    const rawKeys = candidateKeys(scanBody)
     const keys = activeKeys.length
       ? rawKeys.filter(key => activeKeys.includes(key))
       : rawKeys
@@ -1428,8 +1490,8 @@ export function analyze(text, customLimits = {}) {
   // 孤立短段數（排除受保護懸疑短句與對白）
   const shortParas = paras.filter(p => hanzi(p) > 0 && hanzi(p) <= 8 && !isProtectedLine(p)).length
 
-  // 頓號三連
-  const dunhaoTriples = (source.match(/[\u4e00-\u9fff]+、[\u4e00-\u9fff]+、[\u4e00-\u9fff]+、[\u4e00-\u9fff]+/g) || []).length
+  // 頓號三連（至少 2 個頓號＝3 項以上並列，允許短名詞／數字／混雜詞）
+  const dunhaoTriples = (source.match(/[^，。！？；：\n]{1,12}、[^，。！？；：\n]{1,12}、[^，。！？；：\n]{1,12}/g) || []).length
 
   // 連續純對白段
   let maxRain = 0
@@ -1499,12 +1561,12 @@ export function analyze(text, customLimits = {}) {
 
 // ---- 模型局部校對系統提示詞（從「禁止句型」升級為「修正敘事習慣、保留角色靈魂」） ----
 
-export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aestheticMode = 'deep') {
+export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aestheticMode = 'deep', modelFamily = '') {
   const scriptRule = toScript === 'simp'
     ? '5. 語文純淨度：統一使用簡體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
     : '5. 語文純淨度：統一使用繁體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
   const parts = [
-    '你是中文小說的局部文體編輯（AutoProof v1.35）。你的職責是修正被指出的「機械化敘事習慣與 AI 腔對白」，而不是替作者重寫故事。',
+    '你是中文小說的局部文體編輯（AutoProof v1.37）。你的職責是修正被指出的「機械化敘事習慣與 AI 腔對白」，而不是替作者重寫故事。',
     '請判斷候選是否構成機械模板：未命中的正常語句盡量保留原樣；但凡【精準定位命中】明確點出 `[對白AI腔]`、隱性對仗金句（「不X了。我Y。」「V的是A，V的是B」「沒錯，錯在…」）、機械數字遞進或無意義複位動作，屬於已確診病灶，務必實質改寫成真人隨口說的話，不得原句照抄。',
     '',
     '【最高優先級：最小改動與有效去 AI 味邊界】',
@@ -1530,7 +1592,12 @@ export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aesthetic
       '6. 替換不複用：同一種模板詞（如「眼神」「嘴角」「點頭」）在段內重複命中時，各處須改用不同具體動作或細節，嚴禁全部統一換成「垂下眼」或每個動作都墊「了一下」製造新指紋。',
       '7. 動作後少解釋一句：若前文的動作、物件或原話已經把情緒寫出來，直接刪掉後面的情緒註解（例如「他把門打開又關上」後面不必補「他猶豫了」）。',
       '8. 停早一拍、刪減升華：段尾若出現「這一刻」「他終於明白」「原來所謂…」等說教或強行總結句，優先刪剪並停在最後一個具體動作、畫面或對話上。',
+      '9. C 級反誤傷豁免：正常被動句、自然問句／設問、口語「的時候」、多人清晰場景的人名全稱複現，以及真實口語猶豫（「不對，其實…」「我想想」「說不準」）均屬真人正常筆法，切勿為去 AI 味而硬改成僵硬短句。',
     )
+  }
+  const mf = modelFamily ? detectModelFamily(modelFamily) : null
+  if (mf && mf.family !== 'unknown' && mf.preGenPrior) {
+    parts.push('', `【模型家族慣癖防範（${mf.family}）】`, mf.preGenPrior)
   }
   if (styleGuide) {
     parts.push('', '【本卡文風基準（優先參照）】', styleGuide)
@@ -1609,7 +1676,10 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     includeStyleHints = true,
     utteranceGateActive = false,
     styleCardText = '',
+    sampleAnchors = [],
+    voiceBlock = '',
     verbalizedSampling = false,
+    modelPrior = '',
   } = extra
   const hints = []
   if (includeStyleHints && (recurringKeys.length || mode !== 'conservative')) {
@@ -1636,6 +1706,9 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     if (structuralFlags.includes('flat_pacing')) {
       hints.push('【節奏變化提醒】最近多輪段長與句長偏均勻，請依場景張力錯落安排長短句與段落呼吸。')
     }
+    if (structuralFlags.includes('telegraph_short_paras')) {
+      hints.push('【段落呼吸提醒】近期出現過多「一句一段」碎句電報體，請適度合併連貫動作與場景描寫成自然段落。')
+    }
     if (structuralFlags.includes('telling_heavy')) {
       hints.push('【感官具象提醒】最近多輪情緒偏向直接心理說明，請多用具體觸覺、溫度、聲音或空間動作來代替抽象心理詞。')
     }
@@ -1645,6 +1718,18 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     if (structuralFlags.includes('verb_triple_parallel')) {
       hints.push('【句型去公式提醒】減少「動詞A，動詞B，動詞C」三連排比與對仗格言短句，改用更自然口語的節奏表達。')
     }
+    if (structuralFlags.includes('embodied_overload')) {
+      hints.push('【破除生理套路（StoryScope）】不必每場情緒波動都靠心跳漏拍、冷汗、喉結滾動或氣味來「表演」，偶爾直接寫「她怕了」「他很不爽」或用單一乾脆動作更像真人小說。')
+    }
+    if (structuralFlags.includes('cohesion_chain')) {
+      hints.push('【分鏡呼吸提醒】最近段落幾乎每段開頭都在平滑承接（「於是／然而／他…」「這時…」），請適度直接硬切進下一畫面或由對白破題。')
+    }
+    if (structuralFlags.includes('iso_rhythm')) {
+      hints.push('【句拍變化提醒】避免連續兩三句採用一模一樣的字數與逗號切分結構，混用一口氣長句與乾脆短句。')
+    }
+  }
+  if (modelPrior) {
+    hints.push(`【模型習癖平衡】${modelPrior}`)
   }
   if (utteranceGateActive) {
     hints.push('【知而不言邊界】心裡知道的設定 ≠ 嘴上要解釋的話。熟人或同陣營角色對話時，禁止在台詞裡複誦彼此早已知情的公開履歷、歷史沿革或世界觀百科，只說當下互動所需的口語。')
@@ -1653,13 +1738,24 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     hints.push('【多樣性構思（Verbalized Sampling）】動筆前先在思考區比較兩種截然不同的對話接法或切入角度並評估典型度，刻意捨棄最俗套的第一直覺模板，選用新鮮但貼合人設的那一種。')
   }
   const cleanCard = String(styleCardText || '').trim()
-  if (!hints.length && !cleanCard) return ''
+  const anchors = Array.isArray(sampleAnchors) ? sampleAnchors.map((x) => String(x || '').trim()).filter(Boolean) : []
+  const cleanVoice = String(voiceBlock || '').trim()
+  if (!hints.length && !cleanCard && !anchors.length && !cleanVoice) return ''
   const out = []
   if (cleanCard) {
     out.push(`【正面文風參考（Style Card）】\n${cleanCard}`)
   }
+  if (anchors.length) {
+    out.push(
+      `【寫作範例輪轉（只學句法與對話接話節奏，嚴禁照抄原文、嚴禁引入範例裡的人名地名或劇情）】\n`
+      + anchors.map((a, idx) => `（範例 ${idx + 1}）${a}`).join('\n')
+    )
+  }
+  if (cleanVoice) {
+    out.push(cleanVoice)
+  }
   if (hints.length) {
-    out.push(`【敘事文體微調提醒（AutoProof）】\n${hints.slice(0, 7).map(h => `- ${h}`).join('\n')}`)
+    out.push(`【敘事文體微調提醒（AutoProof）】\n${hints.slice(0, 8).map(h => `- ${h}`).join('\n')}`)
   }
   return out.join('\n\n')
 }
@@ -1851,7 +1947,7 @@ export function apply(ctx) {
 
   async function getCardSpec(gameId) {
     if (cardSpecCache.has(gameId)) return cardSpecCache.get(gameId)
-    let spec = { script: 'trad', limits: null, styleGuide: '', entityLocks: [] }
+    let spec = { script: 'trad', limits: null, styleGuide: '', entityLocks: [], properNouns: [] }
     if (typeof ctx.tavern.getCard === 'function') {
       try {
         const card = await ctx.tavern.getCard({ gameId })
@@ -1862,6 +1958,7 @@ export function apply(ctx) {
             limits,
             styleGuide,
             entityLocks: extractCardOmissionLocks(card),
+            properNouns: extractCardProperNouns(card),
           }
         }
       } catch {
@@ -1870,6 +1967,24 @@ export function apply(ctx) {
     }
     cardSpecCache.set(gameId, spec)
     return spec
+  }
+
+  function collectExcludedCooldownTerms(cfg = {}, cardSpec = null, text = '') {
+    const terms = new Set(cardSpec?.properNouns || [])
+    for (const vp of parseCharacterVoices(cfg.characterVoices || '')) {
+      if (vp?.name) terms.add(vp.name)
+    }
+    for (const r of parseCustomEntityRules(cfg.customEntityFixes || '')) {
+      if (r.from) terms.add(r.from)
+      if (r.to) terms.add(r.to)
+    }
+    for (const wl of parseWhitelistLines(cfg.styleWhitelist || '')) {
+      for (const m of wl.matchAll(/[\u4e00-\u9fff]{2,6}/g)) terms.add(m[0])
+    }
+    if (text) {
+      for (const np of detectLikelyProperNouns(text)) terms.add(np)
+    }
+    return Array.from(terms)
   }
 
   const editsOf = (gameId) => {
@@ -1884,6 +1999,7 @@ export function apply(ctx) {
       turn,
       keys: [...new Set(keys)],
       microActions: extra.microActions || {},
+      dynamicImages: extra.dynamicImages || {},
       structuralFlags: [...new Set(extra.structuralFlags || [])],
     }
     const existing = history.findIndex(x => x.turn === turn)
@@ -1896,15 +2012,24 @@ export function apply(ctx) {
 
     const recurringKeys = entry.keys.filter(key => history.filter(x => (x.keys || []).includes(key)).length >= 3)
 
-    // 冷卻池：統計最近視窗內的高頻微動作／意象
+    // 冷卻池：合併高頻微動作詞表 ＋ 無詞表動態抽取意象（過濾專名／角色／戰隊／帳號詞彙）
+    const excludeTerms = Array.isArray(extra.excludeTerms) ? extra.excludeTerms : []
     const phraseTurns = new Map()
     const phraseTotals = new Map()
-    for (const h of history) {
-      const ma = h.microActions && typeof h.microActions === 'object' ? h.microActions : {}
-      for (const [w, cnt] of Object.entries(ma)) {
+    const collectMap = (obj, filterExcluded = false) => {
+      if (!obj || typeof obj !== 'object') return
+      for (const [w, cnt] of Object.entries(obj)) {
+        if (filterExcluded && isCooldownExcludedTerm(w, excludeTerms)) {
+          delete obj[w]
+          continue
+        }
         phraseTurns.set(w, (phraseTurns.get(w) || 0) + 1)
         phraseTotals.set(w, (phraseTotals.get(w) || 0) + (Number(cnt) || 0))
       }
+    }
+    for (const h of history) {
+      collectMap(h.microActions, false)
+      collectMap(h.dynamicImages, true)
     }
     const cooldownWords = Array.from(phraseTotals.entries())
       .filter(([w, total]) => (phraseTurns.get(w) || 0) >= 3 || ((phraseTurns.get(w) || 0) >= 2 && total >= 3))
@@ -1920,14 +2045,14 @@ export function apply(ctx) {
   function pickRecurringStructuralFlags(history = []) {
     const allStruct = [...new Set(history.flatMap(x => x.structuralFlags || []))]
     return allStruct.filter((f) => {
-      const need = (f === 'dialogue_sandwich' || f === 'verb_triple_parallel') ? 2 : 3
+      const need = (f === 'dialogue_sandwich' || f === 'verb_triple_parallel' || f === 'telegraph_short_paras' || f === 'embodied_overload' || f === 'cohesion_chain' || f === 'iso_rhythm') ? 2 : 3
       return history.filter(x => (x.structuralFlags || []).includes(f)).length >= need
     })
   }
 
   // 宿主 gameSettings 上限為 1–20 項；此處保留核心 12 項，完整分頁設定與 ? 說明請使用輸入列「校對設定」面板
   ctx.tavern.gameSettings({
-    title: '自動校對 v1.35',
+    title: '自動校對 v1.37',
     fields: [
       { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。完整分項設定與 ? 說明請點輸入列「校對設定」。', default: true },
       {
@@ -2000,16 +2125,24 @@ export function apply(ctx) {
           const history = styleHistory.get(gameId) || []
 
           const styleCardText = cfg.styleCardEnabled !== false ? String(cfg.styleCardText || '').trim() : ''
+          const anchorsPool = cfg.sampleAnchorsEnabled !== false ? String(cfg.sampleAnchorsText || '').trim() : ''
+          const rotOffset = history.length ? Number(history[history.length - 1]?.turn || history.length) : 0
+          const rotated = anchorsPool ? rotateSampleAnchors(anchorsPool, { offset: rotOffset, limit: 2 }) : { selected: [], total: 0 }
+          const voiceProfiles = parseCharacterVoices(cfg.characterVoices || '')
+          const voiceBlock = formatVoiceInjectionBlock(voiceProfiles)
           const verbalizedSampling = Boolean(cfg.verbalizedSampling)
           const ugMode = cfg.utteranceGate || 'adaptive'
           const recentInfoDump = history.slice(-2).some(h => (h.structuralFlags || []).includes('info_dump_dialogue'))
           const utteranceGateActive = ugMode === 'always' || (ugMode === 'adaptive' && recentInfoDump)
 
-          if (history.length < 2 && !utteranceGateActive && !styleCardText && !verbalizedSampling) {
+          if (history.length < 2 && !utteranceGateActive && !styleCardText && !rotated.selected.length && !voiceBlock && !verbalizedSampling) {
             if (gameId) {
               lastGenHooks.set(gameId, {
                 styleCardApplied: false,
                 styleCardChars: 0,
+                sampleAnchorsUsed: 0,
+                sampleAnchorsTotal: rotated.total,
+                voiceProfilesCount: 0,
                 verbalizedSampling: false,
                 utteranceGateActive: false,
                 preHintActive: false,
@@ -2028,14 +2161,21 @@ export function apply(ctx) {
 
           let cooldownWords = []
           if (cfg.cooldownPool === 'inject' && history.length >= 2) {
+            const cardSpecHook = await getCardSpec(gameId).catch(() => null)
+            const excludeHook = collectExcludedCooldownTerms(cfg, cardSpecHook)
             const phraseTurns = new Map()
             const phraseTotals = new Map()
-            for (const h of history) {
-              const ma = h.microActions && typeof h.microActions === 'object' ? h.microActions : {}
-              for (const [w, cnt] of Object.entries(ma)) {
+            const collect = (obj, filterExcluded = false) => {
+              if (!obj || typeof obj !== 'object') return
+              for (const [w, cnt] of Object.entries(obj)) {
+                if (filterExcluded && isCooldownExcludedTerm(w, excludeHook)) continue
                 phraseTurns.set(w, (phraseTurns.get(w) || 0) + 1)
                 phraseTotals.set(w, (phraseTotals.get(w) || 0) + (Number(cnt) || 0))
               }
+            }
+            for (const h of history) {
+              collect(h.microActions, false)
+              collect(h.dynamicImages, true)
             }
             cooldownWords = Array.from(phraseTotals.entries())
               .filter(([w, total]) => (phraseTurns.get(w) || 0) >= 3 || ((phraseTurns.get(w) || 0) >= 2 && total >= 3))
@@ -2049,20 +2189,33 @@ export function apply(ctx) {
             structuralFlags = pickRecurringStructuralFlags(history)
           }
 
+          let modelMeta = { family: 'unknown', preGenPrior: '' }
+          if (cfg.modelFamilyAdapt !== 'off' && typeof ctx.tavern.backgroundModel === 'function') {
+            const bgInfo = await ctx.tavern.backgroundModel({ gameId }).catch(() => null)
+            modelMeta = detectModelFamily(bgInfo?.model || '')
+          }
+
           const built = buildTurnConstraintHint(recurring, cfg.mode || 'standard', {
             cooldownWords,
             structuralFlags,
             includeStyleHints,
             utteranceGateActive,
             styleCardText,
+            sampleAnchors: rotated.selected,
+            voiceBlock,
             verbalizedSampling,
+            modelPrior: modelMeta.preGenPrior,
           })
           if (gameId) {
             lastGenHooks.set(gameId, {
               styleCardApplied: Boolean(styleCardText),
               styleCardChars: styleCardText.length,
+              sampleAnchorsUsed: rotated.selected.length,
+              sampleAnchorsTotal: rotated.total,
+              voiceProfilesCount: voiceProfiles.length,
               verbalizedSampling,
               utteranceGateActive,
+              modelFamily: modelMeta.family,
               preHintActive: Boolean(built),
               cooldownWords,
               structuralFlags,
@@ -2120,10 +2273,20 @@ export function apply(ctx) {
         const cardSpec = await getCardSpec(gameId)
         const scriptMode = cfg.script || 'auto'
         const toScript = scriptMode === 'simp' ? 'simp' : (scriptMode === 'trad' ? 'trad' : cardSpec.script)
-        const effectiveLimits = cardSpec.limits ? { ...cfg, ...cardSpec.limits } : cfg
+        const prefBgModel = typeof ctx.tavern.backgroundModel === 'function'
+          ? await ctx.tavern.backgroundModel({ gameId }).catch(() => null)
+          : null
+        const modelMeta = (cfg.modelFamilyAdapt !== 'off')
+          ? detectModelFamily(prefBgModel?.model || '')
+          : { family: 'unknown', dashStrict: false, dashLimit: 2.0, preGenPrior: '' }
+        const effectiveLimits = cardSpec.limits ? { ...cfg, ...cardSpec.limits } : { ...cfg }
+        if (cfg.modelFamilyAdapt !== 'off' && (effectiveLimits.dashLimit == null || effectiveLimits.dashLimit === 2.0)) {
+          effectiveLimits.dashLimit = modelMeta.dashLimit
+        }
         const segs = splitSegments(currentRaw)
 
-        // Tier 1：實體專有名詞鎖 ＋ 字級修復檔位 ＋ 雙向引號規範（純本地 0 Token）
+        // Tier 1：實體專有名詞鎖 ＋ 字級修復檔位 ＋ 雙向引號規範 ＋ 非對白廢話起手清理（純本地 0 Token）
+        const whitelistRules = parseWhitelistLines(cfg.styleWhitelist || '')
         const entityLockMode = cfg.entityLockMode || 'auto_and_custom'
         const customRules = entityLockMode !== 'off' ? parseCustomEntityRules(cfg.customEntityFixes || '') : []
         const cardLocks = entityLockMode === 'auto_and_custom' ? (cardSpec.entityLocks || []) : []
@@ -2138,6 +2301,8 @@ export function apply(ctx) {
         let tier1Total = 0
         let entityLockTotal = 0
         let quoteConverted = 0
+        let preCleanedCount = 0
+        const preCleanedRemoved = []
         for (const seg of segs) {
           if (seg.type !== 'text') continue
           if (mergedEntityRules.length > 0) {
@@ -2166,13 +2331,24 @@ export function apply(ctx) {
             seg.content = qRes.text
             quoteConverted += qRes.converted
           }
+          if (cfg.preCleanFillers !== false) {
+            const pRes = preCleanNarrativeFillers(seg.content, { whitelist: whitelistRules })
+            if (pRes.count > 0) {
+              seg.content = pRes.text
+              preCleanedCount += pRes.count
+              for (const rm of pRes.removed) if (!preCleanedRemoved.includes(rm)) preCleanedRemoved.push(rm)
+            }
+          }
         }
         const tier1Fixes = Array.from(charFixMap.values())
         const entityLockDetail = Array.from(entityLockFixMap.values())
 
         const visible = segs.filter(s => s.type === 'text').map(s => s.content).join('')
-        const { metrics, violations, limits, narrative } = analyze(visible, effectiveLimits)
-        const rawStyleKeys = candidateKeys(visible)
+        const wlMask = whitelistRules.length ? maskWhitelistSpans(visible, whitelistRules) : { text: visible, maskedSpans: [], maskedChars: 0 }
+        const scanVisible = wlMask.text
+
+        const { metrics, violations, limits, narrative } = analyze(scanVisible, effectiveLimits)
+        const rawStyleKeys = candidateKeys(scanVisible)
         if (narrative.maxAntithesisIn500 >= 3 && !rawStyleKeys.includes('omitted_antithesis')) {
           rawStyleKeys.push('omitted_antithesis')
         }
@@ -2180,9 +2356,9 @@ export function apply(ctx) {
           rawStyleKeys.push('soft_dialogue_stage')
         }
 
-        // 純本地網文 AI 模板詞密度 & 節奏／升華尾句／六感平衡體檢（0 Token）
-        const lexiconAudit = scanWebNovelAiTells(visible, cfg.aiLexiconLevel || 'balanced')
-        const rhythmAudit = analyzeLocalNovelHealth(visible, cfg.localRhythmAudit || 'full')
+        // 純本地網文 AI 模板詞密度 & 節奏／升華尾句／六感／碎句／稀釋平衡體檢（0 Token）
+        const lexiconAudit = scanWebNovelAiTells(scanVisible, cfg.aiLexiconLevel || 'balanced')
+        const rhythmAudit = analyzeLocalNovelHealth(scanVisible, cfg.localRhythmAudit || 'full')
         if (lexiconAudit.triggered && cfg.aiLexiconLevel !== 'off') {
           for (const w of lexiconAudit.warnings) {
             violations.push({ key: 'local_webnovel_lexicon', label: w })
@@ -2194,14 +2370,18 @@ export function apply(ctx) {
           }
         }
 
+        const excludedCooldownTerms = collectExcludedCooldownTerms(cfg, cardSpec, visible)
         const microActionData = (cfg.cooldownPool && cfg.cooldownPool !== 'off')
-          ? extractTurnMicroActions(visible)
+          ? extractTurnMicroActions(scanVisible)
           : { counts: {}, topPhrases: [] }
+        const dynamicImgCounts = (cfg.cooldownPool && cfg.cooldownPool !== 'off')
+          ? extractDynamicImagery(scanVisible, { minCount: 3, excludeTerms: excludedCooldownTerms })
+          : {}
         const narrativeFp = (cfg.narrativeSteering && cfg.narrativeSteering !== 'off')
-          ? analyzeTurnNarrativeFingerprint(visible)
+          ? analyzeTurnNarrativeFingerprint(scanVisible)
           : { flags: [] }
         const infoDumpAudit = (cfg.utteranceGate && cfg.utteranceGate !== 'off')
-          ? detectInfoDumpDialogue(visible)
+          ? detectInfoDumpDialogue(scanVisible)
           : { count: 0, samples: [] }
         if (infoDumpAudit.count > 0) {
           violations.push({
@@ -2209,12 +2389,45 @@ export function apply(ctx) {
             label: `台詞疑含設定集科普（${infoDumpAudit.count} 處，如「${infoDumpAudit.samples[0] || ''}」）`,
           })
         }
+        const speechObjHits = findSpeechObjDefects(scanVisible)
+        if (speechObjHits.length > 0) {
+          violations.push({
+            key: 'speech_obj_defect',
+            label: `言說動詞賓語頂替語病（如「${speechObjHits[0]}」）`,
+          })
+        }
+        const voiceProfiles = parseCharacterVoices(cfg.characterVoices || '')
+        const voiceAudit = voiceProfiles.length ? checkVoiceConsistency(visible, voiceProfiles) : { checked: 0, tabooHits: [], ticsMissing: [], issues: [] }
+        for (const vi of voiceAudit.issues) {
+          violations.push({ key: 'voice_consistency', label: vi })
+        }
+
+        // 稱謂變體混用監測（從多角色基因名或主角姓氏衍生常見稱謂，純報告警示不暴力替換）
+        const aliasGroups = []
+        for (const vp of voiceProfiles) {
+          const nm = vp.name
+          if (/^[\u4e00-\u9fff]{2,3}$/.test(nm)) {
+            const sur = nm[0]
+            aliasGroups.push([nm, `小${sur}`, `老${sur}`, `${sur}先生`, `${sur}小姐`, `${sur}姑娘`, `${sur}公子`])
+          }
+        }
+        const addressWarnings = aliasGroups.length ? checkAddressConsistency(visible, aliasGroups) : []
+
+        const concentration = calcAiConcentration(scanVisible, {
+          tells: lexiconAudit,
+          health: rhythmAudit,
+          antithesisCount: narrative.antithesisCount || 0,
+        })
+
         const combinedStructFlags = [...(narrativeFp.flags || [])]
         if (infoDumpAudit.count > 0) combinedStructFlags.push('info_dump_dialogue')
+        if (rhythmAudit.oneSentenceParas?.triggered) combinedStructFlags.push('telegraph_short_paras')
 
         const historyRes = trackStyleHistory(gameId, turn, rawStyleKeys, windowSize, {
           microActions: microActionData.counts,
+          dynamicImages: dynamicImgCounts,
           structuralFlags: combinedStructFlags,
+          excludeTerms: excludedCooldownTerms,
         })
         const recurringStyleKeys = historyRes.recurringKeys
         const cooldownWords = cfg.cooldownPool !== 'off' ? historyRes.cooldownWords : []
@@ -2223,9 +2436,9 @@ export function apply(ctx) {
         const protectMode = cfg.protectDialogue === false
           ? 'off'
           : (cfg.protectDialogue === true ? 'smart' : (cfg.protectDialogue || 'smart'))
-        const semantic = semanticHits(visible, recurringStyleKeys, { mode })
+        const semantic = semanticHits(scanVisible, recurringStyleKeys, { mode, protectDialogue: protectMode })
         if (protectMode !== 'strict' && !semantic.some(s => s.key === 'dialogue_ai_tone')) {
-          const dlgFlavor = analyzeDialogueAiFlavor(visible)
+          const dlgFlavor = analyzeDialogueAiFlavor(scanVisible)
           if (dlgFlavor.hasAiFlavor) {
             semantic.push({
               key: 'dialogue_ai_tone',
@@ -2240,6 +2453,8 @@ export function apply(ctx) {
         }
 
         const extraStyleCard = cfg.styleCardEnabled !== false ? String(cfg.styleCardText || '').trim() : ''
+        const anchorsRawText = cfg.sampleAnchorsEnabled !== false ? String(cfg.sampleAnchorsText || '').trim() : ''
+        const anchorsMeta = anchorsRawText ? rotateSampleAnchors(anchorsRawText, { offset: turn, limit: 2 }) : { selected: [], total: 0 }
         const lastHook = lastGenHooks.get(gameId) || null
         let scriptViolation = null
         const report = {
@@ -2266,6 +2481,36 @@ export function apply(ctx) {
             styleCardChars: extraStyleCard.length,
             styleCardGenUsed: Boolean(lastHook?.styleCardApplied),
             styleCardTier2Used: false,
+            sampleAnchorsEnabled: cfg.sampleAnchorsEnabled !== false,
+            sampleAnchorsTotal: anchorsMeta.total,
+            sampleAnchorsGenUsed: lastHook?.sampleAnchorsUsed || 0,
+            voiceProfileCount: voiceProfiles.length,
+            voiceGenUsed: lastHook?.voiceProfilesCount || 0,
+            voiceTabooHits: voiceAudit.tabooHits,
+            voiceTicsMissing: voiceAudit.ticsMissing,
+            whitelistRuleCount: whitelistRules.length,
+            whitelistMaskedChars: wlMask.maskedChars,
+            dynamicImagesCount: Object.keys(dynamicImgCounts).length,
+            speechObjDefectsCount: speechObjHits.length,
+            oneSentenceParas: rhythmAudit.oneSentenceParas || null,
+            dilution: rhythmAudit.dilution || null,
+            concentration,
+            modelFamily: modelMeta.family,
+            dashLimitApplied: effectiveLimits.dashLimit,
+            preCleanedCount,
+            preCleanedRemoved,
+            isomorphicPairs: rhythmAudit.isomorphic?.pairCount || 0,
+            isomorphicTriples: rhythmAudit.isomorphic?.tripleCount || 0,
+            listPrefixRuns: (rhythmAudit.listPrefix?.runs || []).length,
+            translationeseCount: rhythmAudit.syntax?.total || 0,
+            scareQuotesCount: rhythmAudit.syntax?.scareQuotes || 0,
+            synonymSwapWindows: rhythmAudit.synonymSwaps?.windowCount || 0,
+            mtldEstimate: rhythmAudit.mtld ?? null,
+            maxCohesionChain: rhythmAudit.cohesion?.maxChain || 0,
+            embodiedHits: rhythmAudit.embodied?.hits || 0,
+            embodiedOverload: Boolean(rhythmAudit.embodied?.overloaded),
+            rlhfFunctionRatio: rhythmAudit.rlhfFunctionRatio ?? 0,
+            addressWarnings,
             verbalizedSampling: Boolean(cfg.verbalizedSampling),
             entityLockMode,
             entityLockRuleCount: mergedEntityRules.length,
@@ -2278,10 +2523,13 @@ export function apply(ctx) {
             infoDumpCount: infoDumpAudit.count,
             infoDumpSamples: infoDumpAudit.samples || [],
             cooldownMode: cfg.cooldownPool || 'inject',
-            turnMicroActions: Object.entries(microActionData.counts || {}).map(([word, count]) => ({ word, count })),
+            turnMicroActions: [
+              ...Object.entries(microActionData.counts || {}).map(([word, count]) => ({ word, count })),
+              ...Object.entries(dynamicImgCounts || {}).slice(0, 3).map(([word, count]) => ({ word: `${word}(意象)`, count })),
+            ],
             cooldownInjected: cooldownWords,
             narrativeSteeringMode: cfg.narrativeSteering || 'inject',
-            turnStructuralFlags: narrativeFp.flags || [],
+            turnStructuralFlags: combinedStructFlags,
             structuralRecurring,
             preHintGenInjected: Boolean(lastHook?.preHintActive),
             protectDialogueMode: protectMode,
@@ -2330,6 +2578,7 @@ export function apply(ctx) {
           const allNumbered = numberedSegments(segs, Boolean(scriptViolation), semantic.map(x => x.key), {
             mode,
             maxSegments: cardSpec.limits?.maxSegments,
+            whitelist: whitelistRules,
           })
 
           // NSFW 安全分流 + 智能對話口癖保護區過濾
@@ -2385,7 +2634,8 @@ export function apply(ctx) {
                 ? await ctx.tavern.versionSignal({ gameId, turn, textVersion: currentVersion }).catch(() => null)
                 : null
               const mergedStyleGuide = [cardSpec.styleGuide, extraStyleCard].filter(Boolean).join('\n\n')
-              const rewriteSystem = buildRewriteSystem(toScript, mergedStyleGuide, cfg.aestheticPrompt || 'deep')
+              const rewriteSystem = buildRewriteSystem(toScript, mergedStyleGuide, cfg.aestheticPrompt || 'deep', modelMeta.family)
+              const injectedStockCounts = {}
               report.tier2.styleCardUsed = Boolean(extraStyleCard)
               report.features.styleCardTier2Used = Boolean(extraStyleCard)
               report.tier2.contrastiveExemplarsUsed = cfg.contrastiveExemplars !== false
@@ -2394,14 +2644,15 @@ export function apply(ctx) {
               const buildPrompt = (seg) => {
                 const findings = seg.findings || []
                 const mustMerge = findings.includes('action_inflation') || findings.includes('action_chain')
+                const scanSegContent = whitelistRules.length ? maskWhitelistSpans(seg.content, whitelistRules).text : seg.content
                 const locatedSpans = cfg.targetedFeedback !== false
-                  ? locateParagraphIssues(seg.content, findings, {
+                  ? locateParagraphIssues(scanSegContent, findings, {
                       protectDialogue: protectMode,
                       lexiconLevel: cfg.aiLexiconLevel || 'balanced',
                     })
                   : []
                 const targetSnippets = locatedSpans
-                  .map((sp) => sp.replace(/^\[對白AI腔\]\s*/, '').trim())
+                  .map((sp) => sp.replace(/^\[(?:對白AI腔|語病定位|句法譯製腔)\]\s*/, '').trim())
                   .filter((sp) => sp.length >= 3 && !sp.startsWith('['))
                 if (locatedSpans.length > 0) {
                   report.tier2.targetedSpans = (report.tier2.targetedSpans || 0) + locatedSpans.length
@@ -2501,7 +2752,7 @@ export function apply(ctx) {
                   const scored = rawCandidates.map((cand, idx) => ({
                     idx,
                     text: cand,
-                    ...scoreRewriteCandidate(seg.content, cand, guardLevel),
+                    ...scoreRewriteCandidate(seg.content, cand, guardLevel, { injectedStockCounts }),
                   }))
                   const valid = scored.filter((x) => x.ok)
                   if (!valid.length) {
@@ -2548,6 +2799,7 @@ export function apply(ctx) {
               let applied = 0
               let changed = 0
               let unchanged = 0
+              const STOCK_CHECK_PHRASES = ['垂下眼', '扯了扯嘴角', '了一下', '轉開視線', '转开视线', '抿了抿唇', '低笑一聲', '低笑一声']
               await poolMap(numbered, 3, async (seg) => {
                 try {
                   const text = await rewriteOne(seg)
@@ -2557,6 +2809,11 @@ export function apply(ctx) {
                       const trailing = seg.content.match(/\n+$/)?.[0] || ''
                       seg.rewrite = text + trailing
                       changed += 1
+                      for (const st of STOCK_CHECK_PHRASES) {
+                        if (!origTrim.includes(st) && text.includes(st)) {
+                          injectedStockCounts[st] = (injectedStockCounts[st] || 0) + 1
+                        }
+                      }
                     } else {
                       unchanged += 1
                     }
@@ -2609,6 +2866,57 @@ export function apply(ctx) {
             seg.rewrite = seg.rewrite.replace(/<\/?[a-zA-Z][^>]{0,80}>/g, '')
           }
         }
+        // 跨段「替換不複用」後驗：同一輪裡有多段各自新塞進同一批套詞（如「垂下眼」「扯了扯嘴角」），超過首段的輕病灶退回原文
+        {
+          const dedupSeen = new Set()
+          const checkStock = ['垂下眼', '扯了扯嘴角', '了一下', '轉開視線', '转开视线', '抿了抿唇', '低笑一聲', '低笑一声']
+          let dedupReverted = 0
+          for (const seg of segs) {
+            if (seg.type !== 'text' || typeof seg.rewrite !== 'string') continue
+            const origTrim = seg.content.trim()
+            const nextTrim = seg.rewrite.trim()
+            if (nextTrim === origTrim) continue
+            let dupHit = false
+            for (const st of checkStock) {
+              if (!origTrim.includes(st) && nextTrim.includes(st)) {
+                if (dedupSeen.has(st)) {
+                  dupHit = true
+                  break
+                }
+                dedupSeen.add(st)
+              }
+            }
+            if (dupHit && (seg.findings?.length || 0) <= 1) {
+              delete seg.rewrite
+              dedupReverted += 1
+            }
+          }
+          report.tier2.dedupReverted = dedupReverted
+        }
+        // 全輪「過度清理刪減比例」護欄（conservative 15% / standard 25% / aggressive 35%，來源：deai SKILL.md）
+        {
+          const MAX_DEL = { conservative: 0.15, standard: 0.25, aggressive: 0.35 }
+          const limitRatio = MAX_DEL[mode] ?? 0.25
+          const visibleOrigHanzi = hanzi(visible)
+          const countAfterHanzi = () => segs.reduce((sum, s) => {
+            if (s.type !== 'text') return sum
+            return sum + hanzi(typeof s.rewrite === 'string' ? s.rewrite : s.content)
+          }, 0)
+          let afterH = countAfterHanzi()
+          if (visibleOrigHanzi >= 60 && ((visibleOrigHanzi - afterH) / visibleOrigHanzi) > limitRatio) {
+            const rewrittenSegs = segs
+              .filter((s) => s.type === 'text' && typeof s.rewrite === 'string' && s.rewrite.trim() !== s.content.trim())
+              .sort((a, b) => (a.findings?.length || 0) - (b.findings?.length || 0))
+            for (const s of rewrittenSegs) {
+              if (((visibleOrigHanzi - afterH) / visibleOrigHanzi) <= limitRatio) break
+              delete s.rewrite
+              afterH = countAfterHanzi()
+            }
+            report.tier2.deletionGuardTripped = true
+          } else {
+            report.tier2.deletionGuardTripped = false
+          }
+        }
         let outText = reassemble(segs)
         // v1.25：写回前硬校验 HTML 区段；不一致先抢救重拼，还不行就放弃写回并记录差异
         let protectedDiff = diffProtected(currentRaw, outText)
@@ -2632,7 +2940,7 @@ export function apply(ctx) {
           }
         }
         const finalText = outText
-        report.edited = finalText !== currentRaw || tier1Total > 0
+        report.edited = finalText !== currentRaw || tier1Total > 0 || preCleanedCount > 0
         if (protectedDiff) report.writeError = 'HTML 区段被改动：' + protectedDiff
 
         // v1.24：写回前先确认是不是最新一轮——不是就只报告不写回（否则每次重跑都在同一份原文上重复劳动）
@@ -2750,6 +3058,21 @@ export function apply(ctx) {
           styleCardChars: extraStyleCard.length,
           styleCardGenUsed: Boolean(lastHook?.styleCardApplied),
           styleCardTier2Used: Boolean(report.tier2.styleCardUsed),
+          sampleAnchorsTotal: anchorsMeta.total,
+          sampleAnchorsGenUsed: lastHook?.sampleAnchorsUsed || 0,
+          voiceProfiles: voiceProfiles.length,
+          voiceTabooHits: voiceAudit.tabooHits.length,
+          whitelistRules: whitelistRules.length,
+          whitelistMaskedChars: wlMask.maskedChars,
+          speechObjDefects: speechObjHits.length,
+          preCleanedCount,
+          modelFamily: modelMeta.family,
+          concentration: concentration.score,
+          isomorphicPairs: rhythmAudit.isomorphic?.pairCount || 0,
+          isomorphicTriples: rhythmAudit.isomorphic?.tripleCount || 0,
+          translationeseCount: rhythmAudit.syntax?.total || 0,
+          dedupReverted: report.tier2.dedupReverted || 0,
+          deletionGuardTripped: Boolean(report.tier2.deletionGuardTripped),
           verbalizedSampling: Boolean(cfg.verbalizedSampling),
           cooldownWords: report.localAudit?.cooldownWords || [],
           structuralRecurring: report.localAudit?.structuralRecurring || [],
@@ -2895,11 +3218,19 @@ export function apply(ctx) {
       : analyzeAndSampleNovel(raw, { maxTotalChars: 5200, sliceCount: 6 })
     const statsBlock = String(bookStatsSummary || analyzed.statsSummary || '').trim()
 
+    const voiceSchemaHint = toScript === 'simp'
+      ? '角色名 | 语气=10~25字说话节奏/性格 | 口头禅=词1,词2 | 绝不说=违和AI腔或禁词1,词2'
+      : '角色名 | 語氣=10~25字說話節奏/性格 | 口頭禪=詞1,詞2 | 絕不說=違和AI腔或禁詞1,詞2'
     const system = [
-      '你是小說文體分析專家。請綜合「客觀語言統計指紋」與「小說範文（可能包含從全書前、中、後期均勻採樣的多段節錄）」，抽取出 130～240 字的「正面文風指南（Style Card）」。',
+      '你是小說文體與人物語氣分析專家。請綜合「客觀語言統計指紋」與「小說範文」，一次萃取兩部分內容，並嚴格使用以下兩個區塊標記輸出：',
       scriptHint,
-      '必須涵蓋：1) 句長、短句比例與分段換行節奏；2) 對話接話密度、口語停頓與調侃／留白方式（對話可自然直接接話，不必建議每句都加「稱謂＋微動作＋說」）；3) 動作與感官描寫顆粒度；4) 情緒表達的克制或張力特徵。',
-      '嚴格禁止：出現原作裡的任何人名、地名、書名、組織、具體道具（如耳麥／某個口頭禪樣例）、具體招式、固定幾句必幾字這類死板數字公式，或「不准/禁止/不要」等負面清單；全部用通用的寫作節奏、口語接話質感與情緒留白特徵來描述，不可引誘模型寫對仗格言金句或堆砌微動作次數。只輸出指南正文。',
+      '',
+      '===STYLE_CARD===',
+      '輸出 130～240 字的「正面文風指南（Style Card）」，必須涵蓋：1) 句長、短句比例與分段換行節奏；2) 對話接話密度、口語停頓與調侃／留白方式（對話可自然直接接話，不必建議每句都加「稱謂＋微動作＋說」）；3) 動作與感官描寫顆粒度；4) 情緒表達的克制或張力特徵。',
+      '嚴格禁止在 ===STYLE_CARD=== 中出現原作人名、地名、書名、組織、具體道具或死板數字公式，也不要寫「不准/禁止/不要」負面清單。',
+      '',
+      '===CHARACTER_VOICES===',
+      `若範文中出現有明確角色名的對話與性格差異，請列出最多 6 位關鍵角色，每行 1 位，嚴格使用格式：${voiceSchemaHint}（某一欄位空白可省略該小項，切勿虛構角色或編造書中不存在的角色）；若範文無人名對白或無法分辨角色，請只輸出 NONE。`,
     ].join('\n')
     const userPrompt = [
       fileName ? `【檔案參考】${String(fileName).slice(0, 80)}` : '',
@@ -2917,7 +3248,8 @@ export function apply(ctx) {
         sessionId: gameId,
         timeoutMs: 90000,
       })
-      let cleaned = cleanModelText(out).slice(0, 1200)
+      const { styleRaw, voiceRaw } = splitExtractStyleSections(out)
+      let cleaned = cleanModelText(styleRaw).slice(0, 1200)
       if (cleaned) {
         cleaned = applyCharFixes(cleaned, { enablePhrases: true, toScript }).text
         cleaned = normalizeQuotes(cleaned, toScript === 'simp' ? 'simp_curly' : 'trad_corner').text
@@ -2926,8 +3258,37 @@ export function apply(ctx) {
         emitLog({ evt: 'extract-style', gameId, fileName, toScript, inputChars: raw.length, ok: false, error: 'empty' })
         return { ok: false, error: '模型回傳為空' }
       }
-      emitLog({ evt: 'extract-style', gameId, fileName, toScript, inputChars: raw.length, styleCardChars: cleaned.length, ok: true })
-      return { ok: true, styleCard: cleaned, statsSummary: statsBlock, toScript }
+      let characterVoicesText = ''
+      let characterVoicesCount = 0
+      if (voiceRaw) {
+        const fixedVoiceRaw = applyCharFixes(voiceRaw, { enablePhrases: true, toScript }).text
+        const parsedVoices = parseCharacterVoices(fixedVoiceRaw)
+        characterVoicesText = serializeCharacterVoices(parsedVoices, toScript)
+        characterVoicesCount = parseCharacterVoices(characterVoicesText).length
+      }
+      const autoAnchors = extractStyleAnchorsFromText(raw, { maxAnchors: 6 })
+      const anchorsText = autoAnchors.join('\n---\n')
+      emitLog({
+        evt: 'extract-style',
+        gameId,
+        fileName,
+        toScript,
+        inputChars: raw.length,
+        styleCardChars: cleaned.length,
+        anchorsCount: autoAnchors.length,
+        characterVoicesCount,
+        ok: true,
+      })
+      return {
+        ok: true,
+        styleCard: cleaned,
+        anchorsText,
+        anchorsCount: autoAnchors.length,
+        characterVoicesText,
+        characterVoicesCount,
+        statsSummary: statsBlock,
+        toScript,
+      }
     } catch (e) {
       const errMsg = String(e?.message || e).slice(0, 180)
       emitLog({ evt: 'extract-style', gameId, fileName, toScript, inputChars: raw.length, ok: false, error: errMsg })
@@ -2979,8 +3340,41 @@ export const __test = Object.freeze({
   analyzeTurnNarrativeFingerprint,
   parseCustomEntityRules,
   extractCardOmissionLocks,
+  extractCardProperNouns,
+  detectLikelyProperNouns,
+  isCooldownExcludedTerm,
   applyEntityLocks,
   detectInfoDumpDialogue,
   analyzeAndSampleNovel,
   analyzeDialogueAiFlavor,
+  CONFUSABLE_CHARS,
+  calcBigramJaccard,
+  WHITELIST_MASK_CHAR,
+  parseWhitelistLines,
+  maskWhitelistSpans,
+  extractDynamicImagery,
+  extractStyleAnchorsFromText,
+  rotateSampleAnchors,
+  parseCharacterVoices,
+  clauseHits,
+  checkVoiceConsistency,
+  formatVoiceInjectionBlock,
+  serializeCharacterVoices,
+  splitExtractStyleSections,
+  findSpeechObjDefects,
+  scanWindowClusters,
+  scanSyntaxAndTranslationese,
+  calcSentenceIsomorphism,
+  detectListLikePrefixRun,
+  estimateBigramMtld,
+  detectSynonymSwaps,
+  countParagraphCohesionChain,
+  detectEmbodiedOverload,
+  calcFunctionCharRatio,
+  hasGenuineImperfection,
+  calcContentOverlap,
+  preCleanNarrativeFillers,
+  calcAiConcentration,
+  detectModelFamily,
+  checkAddressConsistency,
 })

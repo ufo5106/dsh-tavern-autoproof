@@ -1,7 +1,7 @@
 {
   "name": "dsh-tavern-autoproof",
-  "version": "1.35.0",
-  "description": "DSH Tavern 自動校對與去 AI 文體插件（v1.35.0：正面文風卡＋整本小說上傳萃取 + Verbalized Sampling + 實體名詞鎖 + 知而不言邊界 + 智能對白去 AI 味與防照抄重試 + 三分區報告）",
+  "version": "1.37.0",
+  "description": "DSH Tavern 自動校對與去 AI 文體插件（v1.37.0：文風與語言基因一鍵萃取、範例輪轉、AI 味綜合濃度、模型家族指紋適配、句構同構／翻譯腔與無損廢話清理、承諾／防退化／跨段去重護欄）",
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs"

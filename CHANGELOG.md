@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.37.0
+
+### 新增功能（多專案深度借鑑與本地 0-Token 升級）
+
+- **AI 味綜合濃度評分與真實細節抵銷 (`calcAiConcentration`)**：
+  - 依「根因類（翻譯腔／對舉／模板）」「並發／節奏類（弱副詞聚簇／同構句／列表開頭／抒情堆砌）」加權計分，並針對句長單調進行放大；若段落內帶有具體時間／數值細節錨點或真人口語猶豫痕跡，會自動給予折扣，避免寫得紮實卻因偶爾帶到副詞而被誤判重寫。
+  - 新增「200 字局部滑窗聚簇偵測 (`scanWindowClusters`)」，解決長回合全文均值稀釋局部爆表的問題，並統計語氣詞（啊、吧、呢、嘛、喔、啦、耶）千字密度與 RLHF 七虛詞密度（`的著着了把被將在`）。
+- **無損清理敘事廢話起手 (`preCleanFillers` / `preCleanNarrativeFillers`)**：
+  - 純本地 0 Token，僅作用於非對白敘事且自動避開文風白名單；直接移除句首零資訊廢話殼（如 `不可否認的是，`、`顯而易見的是，`、`值得一提的是，`、`不難看出，`、`眾所周知，` 等）並修復殘留雙逗號與孤立標點。
+- **敘事級句法翻譯腔、同構句拍、列表感與刻意換詞偵測 (`local-rules.mjs` / `index.mjs`)**：
+  - 新增 `scanSyntaxAndTranslationese`：抓取 `當…時`（自動排除口語「的時候」）、`對於…來說／就…而言`、`在…的過程中／情況下`、`以一種…的方式`、三連「的」鏈、`進行討論／加以說明／做出決定` 雙音節膨脹動詞殼與非對白短引號自造金句 (`countNonDialogueScareQuotes`)，同步接入 `locateParagraphIssues` 精準定位與動態對照範例。
+  - 新增 `calcSentenceIsomorphism`（逗號數＋長度桶兩連／三連同構節拍檢測）、`detectListLikePrefixRun`（連續 `>= 3` 句同前 2 字開頭列表感）、`estimateBigramMtld`（雙字偽詞 MTLD 估計）與 `detectSynonymSwaps`（同段同義詞刻意輪換檢測）。
+- **依模型家族指紋自適應先驗 (`modelFamilyAdapt` / `detectModelFamily`) ＋ StoryScope+**：
+  - 辨識後台／生成模型家族（`deepseek` / `claude` / `gpt` / `gemini` / `kimi`），自動調整引號外破折號觀察線（DeepSeek/Claude `1.5/千字`、Gemini/GPT `3.5/千字`）並在生成前與 Tier 2 系統提示注入簡要慣癖防範。
+  - 擴充 `analyzeTurnNarrativeFingerprint` 與 `buildTurnConstraintHint`：納入 `detectEmbodiedOverload`（防止只靠心跳／冷汗／氣味表演情緒而缺乏直接情緒命名）與 `countParagraphCohesionChain`（偵測連續 `>= 6` 段平滑承接，適時提醒硬切呼吸感）。
+- **同角色稱謂變體混用監測 (`checkAddressConsistency`)**：
+  - 搭配 `characterVoices` 人物表純本地統計多變體稱謂混亂（總出現 `>= 10` 次且多個變體各佔 `>= 15%` 時於報告提醒，不做暴力替換）。
+
+### 原有功能修復與核心改進
+
+- **冷卻池專名防誤抓修復 (`extractCardProperNouns` / `detectLikelyProperNouns` / `isCooldownExcludedTerm`)**：
+  - 修復動態意象抽取將角色卡、世界書（`character_book` keys／設定名詞）及正文內的遊戲角色、戰隊、帳號卡名稱（如 `微草`、`木恩`、`獨活`）誤收進冷卻池的問題；採「按標點分段切詞 ＋ 卡面／世界書／白名單／名詞鎖／基因卡自動排除 ＋ 正文語境動態識別 ＋ 舊歷史緩存自動清洗」四層防護，且預設意象門檻調高為 `>= 3` 次。
+- **防幻覺、承諾強度保真與整輪防退化護欄 (`validateTier2Rewrite` / `scoreRewriteCandidate` / `index.mjs`)**：
+  - `extractNormalizedNumbers` 豁免 `1900–2100` 年份與「一九九九」類讀法，避免年份格式轉換被誤攔；`scoreRewriteCandidate` 納入 **節奏方差改善比** 與 **雙字以上實詞重疊率**。
+  - 新增 **承諾強度保真 (`commitment-drift`)**：原文帶 `可能／也許／似乎` 且無強肯定詞時，拒收改寫成 `必然／絕對／肯定會`；保護 `hasGenuineImperfection` 真人口語猶豫與自我修正段落不被磨平。
+  - 新增 **防電報體退化 (`telegraph-regression`)**、**跨段「替換不複用」去重 (`dedupReverted`)**（防止多段同時新塞進同一批套詞如 `垂下眼`）與 **最大刪減比例護欄 (`deletionGuardTripped`)**（保守 `15%` / 標準 `25%` / 積極 `35%`），並在 `buildRewriteSystem` 加入 C 級反誤傷豁免條款。
+- **修正 `dunhaoTriples` 與詞庫重複鍵名**：
+  - 修正 [index.mjs](index.mjs) 中 `analyze().metrics.dunhaoTriples` 原先要求 4 項才觸發的漏檢問題，調整為正確的 3 項頓號並列；清理 [lib/local-rules.mjs](lib/local-rules.mjs) 中 `EXEMPLAR_BANK_SIMP` 的重複鍵名。
+
+## 1.36.0
+
+- **文風白名單等長掩碼 (`styleWhitelist` / `maskWhitelistSpans`)**：純本地在掃描輸入端進行等長 `\u0000` 掩碼（原創卡與同人卡皆適用），絕不改動正文原文，保護角色招牌句法與專有寫法免被誤報。
+- **一鍵同時萃取文風卡 ＋ 寫作範例輪轉庫 ＋ 多角色語言基因卡 (`extract-style`)**：
+  - 介面明確標註「正面文風萃取與寫作範例輪轉」主要推薦用於 **同人卡／小說改編卡**（找不到參考原作的原創卡可完全留白略過）。
+  - 執行「一鍵萃取文風與基因」或上傳 `.txt`/`.md` 小說檔時，同一輪可同時萃出 **正面文風錨點**、**寫作範例輪轉庫**（最多 6 段敘事／對白平衡段落，每輪確定性輪轉 2 段並附嚴禁照抄人名劇情邊界），以及 **多角色語言基因卡**（角色名｜語氣｜口頭禪｜絕不說，自動對齊繁簡字形）。
+- **多角色語言基因卡 (`characterVoices`) ＋ 碎句稀釋體檢 ＋ 形近字／低相似度／言說語病守門**：
+  - 新增 `parseCharacterVoices`、`clauseHits`（僅匹配引號與子句邊界，不誤判詞中子字串如「坐在下手」）與 `checkVoiceConsistency` 巡檢台詞禁忌詞。
+  - 補充 `oneSentenceParas`（「一句一段」碎句比例 `>= 45%` 觸發 `telegraph_short_paras`）、純敘事 `dilution`（每句「的」字與 bigram 重複率）、`CONFUSABLE_CHARS` 形近錯字攔截、`calcBigramJaccard < 0.18` 離題重寫攔截與 `findSpeechObjDefects` 言說動詞賓語頂替語病偵測。
+
 ## 1.35.0
 
 ### 新增功能（無需模型微調的生成前後品質強化）

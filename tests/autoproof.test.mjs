@@ -612,3 +612,468 @@ test('v1.35 無微調品質提升：實體名詞鎖、角色知識與台詞邊�
   assert.ok(rptLazy.tier2.spansFixed >= 2)
   assert.ok(writtenText.includes('不光背那些線了'))
 })
+
+test('v1.36 移植強化：白名單掩碼、寫作範例輪轉、動態意象冷卻、碎句稀釋、多角色語言基因卡與語病形近字守門', async () => {
+  const {
+    WHITELIST_MASK_CHAR,
+    parseWhitelistLines,
+    maskWhitelistSpans,
+    extractDynamicImagery,
+    analyzeLocalNovelHealth,
+    extractStyleAnchorsFromText,
+    rotateSampleAnchors,
+    buildTurnConstraintHint,
+    parseCharacterVoices,
+    clauseHits,
+    checkVoiceConsistency,
+    formatVoiceInjectionBlock,
+    CONFUSABLE_CHARS,
+    calcBigramJaccard,
+    validateTier2Rewrite,
+    findSpeechObjDefects,
+  } = __test
+
+  // 1. 文風白名單等長掩碼（僅影響掃描文字，不動 seg.content 原文）
+  const wl = parseWhitelistLines('# 註釋忽略\n這不是錯，而是執念。\n太宰治')
+  assert.equal(wl.length, 2)
+  const wlRaw = '太宰治站在廊下，這不是錯，而是執念。\n空氣彷彿凝固了一瞬，這不是逃避，而是無奈。'
+  const masked = maskWhitelistSpans(wlRaw, wl)
+  assert.ok(masked.maskedSpans.length >= 2)
+  assert.equal(masked.text.length, wlRaw.length)
+  assert.ok(masked.text.includes(WHITELIST_MASK_CHAR))
+  assert.ok(masked.text.includes('這不是逃避，而是無奈'))
+
+  const wlSegs = numberedSegments(splitSegments(wlRaw), false, [], {
+    mode: 'standard',
+    whitelist: wl,
+  })
+  assert.equal(wlSegs.length, 1)
+  assert.ok(wlSegs[0].content.includes('這不是逃避'))
+  assert.ok(!wlSegs[0].content.includes(WHITELIST_MASK_CHAR), 'seg.content 必須保留乾淨原文')
+
+  // 2. 寫作範例萃取與確定性輪轉庫 + buildTurnConstraintHint
+  const sampleNovel = [
+    '傍晚的雨順著青瓦檐口砸下來，濺濕了階前的半截石獅。他把油紙傘收攏在腋下，只露出半張被寒氣凍得發青的側臉，垂眸盯著門縫裡透出的那點昏黃燈火。',
+    '「你倒還敢上門。」屋裡頭炭盆啪地炸開一星火星，老掌櫃沒抬眼皮，手裡的算盤珠子卻停住了，「當年那筆賬，可不是三兩句話就能抹平的。」',
+    '巷口那盞白紗燈在風裡晃得厲害，影子被拉長又猛地縮回去。他沒接話，只是伸手解開了領口的盤扣，從懷裡摸出一枚缺了角的銅錢拍在櫃檯上。',
+    '街對面的茶樓早已打烊，二樓木窗卻悄悄支起一道縫隙。灰布衫的年輕人倚在欄杆後頭，指節輕輕叩著窗沿，把樓下兩人的來去看得一清二楚。',
+    '夜深了，打更的梆子聲剛從西市繞過來，穿過潮濕的石板巷道。那隻黑貓從矮牆上一躍而下，踩過積水卻半點聲響也沒驚動。',
+    '「把門插上。」她吹熄桌上的蠟燭，只留牆角一線冷白的月光斜斜照進來，「今夜無論誰敲門，都別開。」',
+  ].join('\n\n')
+  const anchors = extractStyleAnchorsFromText(sampleNovel, { maxAnchors: 6 })
+  assert.ok(anchors.length >= 4 && anchors.length <= 6)
+  const anchorsText = anchors.join('\n---\n')
+  const r0 = rotateSampleAnchors(anchorsText, { offset: 0, limit: 2 })
+  const r1 = rotateSampleAnchors(anchorsText, { offset: 1, limit: 2 })
+  assert.equal(r0.selected.length, 2)
+  assert.equal(r1.selected.length, 2)
+  assert.notEqual(r0.selected[0], r1.selected[0])
+
+  const hintText = buildTurnConstraintHint(['paired_reversal'], 'standard', {
+    sampleAnchors: r0.selected,
+    voiceBlock: '【多角色語言基因錨定（嚴防千人一腔）】\n- 陳默｜習慣口癖：……隨便。',
+    structuralFlags: ['telegraph_short_paras'],
+    cooldownWords: ['琥珀', '漣漪'],
+    styleCardText: '白描冷峻',
+  })
+  assert.ok(hintText.includes('【寫作範例輪轉'))
+  assert.ok(hintText.includes('【多角色語言基因錨定'))
+  assert.ok(hintText.includes('碎句電報體'))
+  assert.ok(hintText.includes('琥珀'))
+
+  // 3. 動態無詞表高頻意象 + 碎句／稀釋體檢
+  const repeatedImageryText = [
+    '月光落在青銅鐘上，青銅鐘發出低鳴，斑駁銅綠與青銅鐘一起沉在井底深處，冰冷石磚滲出細密水氣。',
+    '老宅廊簷掛著兩盞風燈，風聲沿著青石階一路往裡灌，整座院子靜得能聽見竹葉摩擦石壁。',
+    '「你別說話！」他喊道，「青銅鐘又響了！」',
+    '風穿過長廊，窗欞上的薄霜一點點化開，窗欞外全是雪，夜色壓低了整片屋瓦與遠處枯樹的輪廓。',
+  ].join('\n')
+  const dynImg = extractDynamicImagery(repeatedImageryText, { minCount: 2, limit: 8 })
+  assert.ok(Object.keys(dynImg).some((t) => t.includes('青銅')), '應捕獲重複出現的敘事意象')
+
+  const shortLines = Array.from({ length: 14 }, (_, i) => `他安靜地站在台階前看著細雨滴落，第${i + 1}次抬起頭。`).join('\n')
+  const health = analyzeLocalNovelHealth(shortLines, 'full')
+  assert.equal(health.oneSentenceParas.triggered, true)
+  assert.ok(health.oneSentenceParas.ratio >= 0.45)
+  assert.ok(health.dilution && typeof health.dilution.dePerSent === 'number')
+
+  // 4. 多角色語言基因卡：子句邊界匹配（不誤判「坐在下手」）+ 禁忌與口癖檢查
+  const profiles = parseCharacterVoices([
+    '陳默 | tics: 隨便, 這不合規 | taboo: 寶貝, 在下',
+    '沈念 | tics: 你猜呢 | taboo: 老子 | tone: 笑裡藏刀',
+  ].join('\n'))
+  assert.equal(profiles.length, 2)
+  assert.equal(clauseHits('他坐在下手位置上喝茶。', '在下').length, 0, '詞中子字串不應誤判為詞彙「在下」')
+  assert.ok(clauseHits('「在下陳默，見過姑娘。」', '在下').length >= 1)
+
+  const voiceCheck = checkVoiceConsistency(
+    '陳默：「寶貝，在下這次可幫不了你。」\n沈念笑道：「你猜呢。」',
+    profiles
+  )
+  assert.ok(voiceCheck.tabooHits.some((h) => h.name === '陳默' && h.phrase === '寶貝'))
+  assert.ok(voiceCheck.tabooHits.some((h) => h.name === '陳默' && h.phrase === '在下'))
+  const voiceBlock = formatVoiceInjectionBlock(profiles)
+  assert.ok(voiceBlock.includes('陳默'))
+  assert.ok(voiceBlock.includes('沈念'))
+
+  // 5. 高危形近字守衛 + Jaccard 相似度下限 + 言說動詞賓語語病
+  assert.ok(CONFUSABLE_CHARS.includes('戍'))
+  assert.ok(calcBigramJaccard('門外的風吹進來', '門外的風吹進來') === 1)
+  const confusableCheck = validateTier2Rewrite('他派兵去戊守邊境。', '他派兵去戍守邊境。', 'strict')
+  assert.equal(confusableCheck.ok, false)
+  assert.ok(confusableCheck.reason.startsWith('confusable-char:'))
+
+  const lowSimCheck = validateTier2Rewrite(
+    '他推開腐朽的木門走進雨夜裡尋找那枚失蹤多年的舊懷錶，腳步踩在青石板上發出清脆迴響。',
+    '今天天空放晴了，大家決定一起坐在草地上開心地分食大西瓜與冰鎮汽水，笑聲不斷。',
+    'strict'
+  )
+  assert.equal(lowSimCheck.ok, false)
+  assert.ok(lowSimCheck.reason.startsWith('low-similarity:'))
+
+  const speechBad = findSpeechObjDefects('他急得把自己家那口大黑鐵鍋喊了半條街，鄰居全都出來看。')
+  assert.ok(speechBad.length >= 1, '應檢出言說動詞接長非語言賓語的語病')
+  const speechOk = findSpeechObjDefects('她把他喊了回來，遞給他一杯熱茶。')
+  assert.equal(speechOk.length, 0)
+
+  // 6. extract-style 同步萃取文風卡 + 寫作範例輪轉 + 多角色語言基因卡 + proofTurn 整合驗證（mock 環境 + _disableLog）
+  const handlers = new Map()
+  let savedTurnData = null
+  let turnSectionSpec = null
+  const mockCtxV136 = {
+    _disableLog: true,
+    llm: {
+      async prepareCall() {
+        return {
+          config: {},
+          async *stream() {
+            yield {
+              type: 'text-delta',
+              text: [
+                '===STYLE_CARD===',
+                '人物冷峻寫實、善用感官白描、短句收束節奏。',
+                '===CHARACTER_VOICES===',
+                '- 老掌柜 | 语气=简短干脆、爱算旧账 | 口头禅=这笔账,且慢 | 绝不说=宝贝,我们别无选择',
+                '2. 陈默 | 语氣=少話冷靜、點到為止 | 絕不說=令人震撼',
+              ].join('\n'),
+            }
+          },
+        }
+      },
+    },
+    tavern: {
+      apiVersion: 7,
+      gameSettings() {},
+      turnSection(spec) { turnSectionSpec = spec },
+      onTurnSettled() {},
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { handlers.set(name, fn) },
+      async backgroundModel() { return { provider: 'mock', model: 'mock-flash' } },
+      async getGameSettings() {
+        return {
+          enabled: true,
+          tier2: false,
+          mode: 'standard',
+          script: 'trad',
+          styleWhitelist: '這不是錯，這是執念。',
+          sampleAnchorsEnabled: true,
+          sampleAnchorsText: anchorsText,
+          characterVoices: '陳默 | tics: 隨便 | taboo: 寶貝',
+        }
+      },
+      async getCard() { return { name: '陳默', description: '原創故事。' } },
+      async getTurnState() { return { turn: 7 } },
+      async getTurn() {
+        return {
+          turn: 7,
+          textVersion: 'v1',
+          rawText: '陳默：「寶貝。」這不是錯，這是執念。風裡全是焦味。',
+        }
+      },
+      async readTurnData() { return savedTurnData },
+      async saveTurnData(_g, _k, val) { savedTurnData = val },
+      async editTurn({ text }) { return { textVersion: 'v2', text } },
+    },
+  }
+  apply(mockCtxV136)
+
+  const extRes = await handlers.get('dsh-tavern-autoproof/extract-style')({
+    gameId: 'g-v136',
+    sampleText: sampleNovel,
+  })
+  assert.equal(extRes.ok, true)
+  assert.ok(extRes.styleCard.includes('感官白描'))
+  assert.ok(extRes.anchorsCount >= 4)
+  assert.ok(extRes.anchorsText.includes('---'))
+  assert.equal(extRes.characterVoicesCount, 2)
+  assert.ok(extRes.characterVoicesText.includes('老掌櫃'))
+  assert.ok(extRes.characterVoicesText.includes('陳默'))
+  assert.ok(!extRes.characterVoicesText.includes('==='))
+
+  const secText = await turnSectionSpec.text({ gameId: 'g-v136', turn: 8 })
+  assert.ok(secText && secText.includes('【寫作範例輪轉'))
+  assert.ok(secText.includes('【多角色語言基因錨定'))
+
+  const proofRpt = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-v136', turn: 7 })
+  assert.equal(proofRpt.turn, 7)
+  assert.ok(proofRpt.features)
+  assert.ok(proofRpt.features.whitelistMaskedChars > 0)
+  assert.ok(proofRpt.features.voiceTabooHits.length >= 1)
+  assert.equal(proofRpt.features.sampleAnchorsGenUsed, 2)
+})
+
+test('v1.37 深化借鑑：同構句拍、翻譯腔與廢話無損預清理、AI 味濃度抵銷、模型家族適配與承諾/防退化/跨段去重護欄', async () => {
+  const {
+    analyze,
+    scanWindowClusters,
+    scanSyntaxAndTranslationese,
+    calcSentenceIsomorphism,
+    detectListLikePrefixRun,
+    estimateBigramMtld,
+    detectSynonymSwaps,
+    countParagraphCohesionChain,
+    detectEmbodiedOverload,
+    preCleanNarrativeFillers,
+    calcAiConcentration,
+    detectModelFamily,
+    checkAddressConsistency,
+    validateTier2Rewrite,
+    scoreRewriteCandidate,
+    hasGenuineImperfection,
+    isDialogueProtectedParagraph,
+  } = __test
+
+  // 1. 頓號 3 項修正 + 句法翻譯腔／膨脹動詞殼（排除口語「的時候」）
+  assert.ok(analyze('桌上有茶壺、油燈、銅錢三樣物件。').metrics.dunhaoTriples >= 1)
+  const transDiag = scanSyntaxAndTranslationese('當他走進屋時，對於她而言，兩人進行了討論並以一種生硬的方式坐下。')
+  assert.ok(transDiag.total >= 4)
+  assert.ok(transDiag.paddingVerbs >= 1)
+  const spokenDiag = scanSyntaxAndTranslationese('走的時候他順手把門帶上。')
+  assert.equal(spokenDiag.counts.when_clause || 0, 0)
+
+  // 2. 200字滑窗集群 + 結構同構 + 連續同開頭列表感
+  const winHit = scanWindowClusters('他緩緩走近，微微抬眼，輕輕抿唇，淡淡笑著點頭。', ['緩緩', '微微', '輕輕', '淡淡'], 200, 3)
+  assert.ok(winHit.maxInWindow >= 4)
+
+  const isoText = '他伸手推開木門，轉身望向院內。她端起桌邊茶盞，緩慢低下視線。他收緊手指關節，依舊沉默不語。'
+  const isoRes = calcSentenceIsomorphism(isoText)
+  assert.ok(isoRes.pairCount >= 1 && isoRes.tripleCount >= 1)
+
+  const listRes = detectListLikePrefixRun('他把茶杯放到桌上。他把油燈撥亮幾分。他把窗戶栓緊不再說話。')
+  assert.ok(listRes.runs.length >= 1 && listRes.runs[0].prefix === '他把')
+
+  // 3. MTLD、同段刻意換詞、過度平滑銜接、過度生理渲染
+  const mtldVal = estimateBigramMtld('青石巷口落了層薄霜，他拎著半壺冷茶沿牆根走過，屋瓦上幾隻灰雀驚飛起來，拐進西邊狹窄木門後面去。'.repeat(2))
+  assert.ok(typeof mtldVal === 'number' && mtldVal > 10)
+  const swapRes = detectSynonymSwaps('他看了一眼屋角，又悄悄盯住那扇半掩的木門，眼神一路凝視過去還順便打量著門鎖。'.repeat(2))
+  assert.ok(swapRes.windowCount >= 1)
+  const cohRes = countParagraphCohesionChain(['第一幕。\n於是他走出去。\n然而沒人應門。\n這時風吹過來。\n所以他回頭。\n緊接著燈亮了。\n因此門開了。'].join('\n'))
+  assert.ok(cohRes.maxChain >= 6)
+  const embRes = detectEmbodiedOverload('他心跳漏一拍，呼吸一滯，喉結滾動著冷汗直流，連胃裡一沉、脊背發涼。')
+  assert.equal(embRes.overloaded, true)
+
+  // 4. 非對白廢話無損預清理（不觸碰對白與白名單）
+  const pcRes = preCleanNarrativeFillers('不可否認的是，風越吹越大。\n「值得一提的是，這句在對白裡要保留。」\n顯而易見的是，門沒鎖。', {
+    whitelist: ['顯而易見的是，門沒鎖。'],
+  })
+  assert.equal(pcRes.count, 1)
+  assert.ok(pcRes.text.startsWith('風越吹越大。'))
+  assert.ok(pcRes.text.includes('「值得一提的是，這句在對白裡要保留。」'))
+  assert.ok(pcRes.text.includes('顯而易見的是，門沒鎖。'))
+
+  // 5. AI 味綜合濃度與具體細節／口語猶豫抵銷
+  const concHigh = calcAiConcentration('他嘴角勾起，心中一震，眼神微暗。當他走近時，以一種不容置疑的方式說完。')
+  const concDamped = calcAiConcentration('昨天下午3點，他攥著50塊錢進門。我想想，不對，其實那件事我說不準，手一抖差點掉在地上。')
+  assert.ok(concHigh.score > concDamped.score)
+  assert.ok(concDamped.anchorHits >= 1 && concDamped.imperfectionHits >= 1)
+
+  // 6. 防幻覺／防退化／承諾保真／年份豁免／跨段去重罰分／口語保護
+  assert.equal(validateTier2Rewrite('他一九九九年抵達此地，共買了兩本書。', '他1999年抵達此地，只帶走2本書。', 'strict').ok, true)
+  const commitFail = validateTier2Rewrite('他或許會改變主意，也許明天再說。', '他必然會改變主意，絕對不會等明天。', 'strict')
+  assert.equal(commitFail.ok, false)
+  assert.equal(commitFail.reason, 'commitment-drift')
+
+  const telFail = validateTier2Rewrite(
+    '他沿著青石板路慢慢走回茶館裡，手裡攥著泛黃舊車票看了許久。推開木門朝裡面張望半天卻發現沒人。',
+    '他沿青石回館。\n走回老茶館裡。\n手緊攥舊車票。\n泛黃票看半天。\n推開舊木門看。\n朝裡面張望著。',
+    'strict'
+  )
+  assert.equal(telFail.ok, false)
+  assert.equal(telFail.reason, 'telegraph-regression')
+
+  const sFresh = scoreRewriteCandidate('他嘴角勾起，這不是害怕。', '他扯開衣領別開目光。', 'strict', { injectedStockCounts: { 垂下眼: 1 } })
+  const sDupStock = scoreRewriteCandidate('他嘴角勾起，這不是害怕。', '他垂下眼沒有再說。', 'strict', { injectedStockCounts: { 垂下眼: 1 } })
+  assert.ok(sFresh.score > sDupStock.score)
+
+  assert.equal(hasGenuineImperfection('「不對，其實我想想還是算了。」'), true)
+  assert.equal(isDialogueProtectedParagraph('「不對，其實我想想還是算了。」', 'smart'), true)
+
+  // 7. 模型家族辨識 ＋ 稱謂混用檢查
+  assert.equal(detectModelFamily('deepseek-chat').dashStrict, true)
+  assert.equal(detectModelFamily('gemini-2.5-flash').dashStrict, false)
+  const addrWarn = checkAddressConsistency(
+    '陳默走了進來，小陳問好。陳默拿起茶杯，小陳坐下，陳默點頭，小陳嘆氣，陳默看窗外，小陳整理書，陳默笑著回話，小陳點點頭。',
+    [['陳默', '小陳']]
+  )
+  assert.equal(addrWarn.length, 1)
+  assert.ok(addrWarn[0].total >= 10)
+
+  // 8. 端到端 mock 驗證：模型辨識 + 預清理 + 跨段去重退回
+  const handlers = new Map()
+  let writtenText = ''
+  let callNum = 0
+  const mockCtxV137 = {
+    _disableLog: true,
+    llm: {
+      async prepareCall() {
+        return {
+          config: {},
+          async *stream() {
+            callNum += 1
+            // 兩段故意都改出同一個「垂下眼」，驗證跨段去重後退回第二段
+            yield {
+              type: 'text-delta',
+              text: callNum === 1
+                ? '他垂下眼，直接走到屋裡的燈下坐定。'
+                : '她垂下眼，朝桌上那隻舊木匣子望過去，神情顯得相當平靜。',
+            }
+          },
+        }
+      },
+    },
+    tavern: {
+      apiVersion: 7,
+      gameSettings() {},
+      turnSection() {},
+      onTurnSettled() {},
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { handlers.set(name, fn) },
+      async backgroundModel() { return { provider: 'mock', model: 'deepseek-chat' } },
+      async getGameSettings() {
+        return {
+          enabled: true,
+          tier2: true,
+          mode: 'standard',
+          script: 'trad',
+          preCleanFillers: true,
+          modelFamilyAdapt: 'auto',
+          characterVoices: '陳默 | 語氣=少話冷靜',
+        }
+      },
+      async getCard() { return { name: '陳默', description: '現代日常故事。' } },
+      async getTurnState() { return { turn: 9 } },
+      async getTurn() {
+        return {
+          turn: 9,
+          textVersion: 'v1',
+          rawText: [
+            '不可否認的是，屋裡還亮著燈。他心中一動，這不是錯，而是無奈。',
+            '她不禁皺著眉頭朝桌上的那隻舊木匣子望過去，神情顯得相當平靜。',
+          ].join('\n'),
+        }
+      },
+      async readTurnData() { return null },
+      async saveTurnData() {},
+      async editTurn({ text }) {
+        writtenText = text
+        return { textVersion: 'v2', text }
+      },
+    },
+  }
+  apply(mockCtxV137)
+  const rpt137 = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-v137', turn: 9 })
+  assert.equal(rpt137.turn, 9)
+  assert.equal(rpt137.features.modelFamily, 'deepseek')
+  assert.equal(rpt137.features.dashLimitApplied, 1.5)
+  assert.equal(rpt137.features.preCleanedCount, 1)
+  assert.ok(rpt137.features.concentration && typeof rpt137.features.concentration.score === 'number')
+  assert.ok(!writtenText.includes('不可否認的是，'))
+  assert.ok(rpt137.tier2.dedupReverted >= 1)
+})
+
+test('冷卻池專名防誤抓：角色卡／世界書與遊戲帳號／戰隊名（微草／木恩／獨活）絕不進冷卻名單', async () => {
+  const {
+    extractCardProperNouns,
+    detectLikelyProperNouns,
+    extractDynamicImagery,
+  } = __test
+
+  const card = {
+    name: '微草戰隊訓練室',
+    description: '隊長王傑希帶領高英傑（帳號卡：木恩）與許斌（帳號卡：獨活）練習。',
+    character_book: {
+      entries: [
+        { keys: ['微草', '木恩', '獨活'], content: '微草戰隊旗下帳號包括王不留行、木恩與獨活。' },
+      ],
+    },
+  }
+  const cardNouns = extractCardProperNouns(card)
+  assert.ok(cardNouns.includes('微草'))
+  assert.ok(cardNouns.includes('木恩'))
+  assert.ok(cardNouns.includes('獨活'))
+
+  const combatText = [
+    '訓練賽開場後，「木恩」拎著掃把搶先升空，「獨活」舉盾護住微草側翼。',
+    '木恩甩出一記熔岩燒瓶，琥珀燈光在訓練室牆面晃動，獨活順勢卡住通道。',
+    '微草隊員配合極緊，木恩繞後壓制，獨活正面頂盾，琥珀燈光映得鍵盤泛黃。',
+    '微草替補席全神貫注看著木恩走位，木恩再度拉開角度，獨活回防極快，頭頂那盞琥珀燈光依舊刺眼。',
+  ].join('\n')
+
+  const autoNouns = detectLikelyProperNouns(combatText)
+  assert.ok(autoNouns.includes('木恩'))
+  assert.ok(autoNouns.includes('獨活'))
+  assert.ok(autoNouns.includes('微草'))
+
+  // 不傳卡面名詞時，僅靠文內自動識別亦不應誤抓木恩／獨活／微草，同時仍可抓到重複意象「琥珀燈光」
+  const imgAuto = extractDynamicImagery(combatText, { minCount: 3 })
+  assert.equal(imgAuto['木恩'], undefined)
+  assert.equal(imgAuto['微草'], undefined)
+  assert.equal(imgAuto['獨活'], undefined)
+  assert.ok(Object.keys(imgAuto).some((k) => k.includes('琥珀')))
+
+  // 端到端驗證 proofTurn + 舊歷史清理（就算舊歷史曾緩存過「木恩」「微草」，也會被自動踢出）
+  const handlers = new Map()
+  let turnSecSpec = null
+  const mockCtxGame = {
+    _disableLog: true,
+    tavern: {
+      apiVersion: 7,
+      gameSettings() {},
+      turnSection(spec) { turnSecSpec = spec },
+      onTurnSettled() {},
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { handlers.set(name, fn) },
+      async readPluginData() {
+        return {
+          styleHistory: {
+            'g-weicao': [
+              { turn: 1, keys: [], microActions: {}, dynamicImages: { 木恩: 5, 微草: 4, 琥珀燈光: 3 }, structuralFlags: [] },
+              { turn: 2, keys: [], microActions: {}, dynamicImages: { 木恩: 6, 微草: 5, 琥珀燈光: 4 }, structuralFlags: [] },
+            ],
+          },
+        }
+      },
+      async getGameSettings() { return { enabled: true, tier2: false, cooldownPool: 'inject' } },
+      async getCard() { return card },
+      async getTurnState() { return { turn: 3 } },
+      async getTurn() { return { turn: 3, textVersion: 'v1', rawText: combatText } },
+      async readTurnData() { return null },
+      async saveTurnData() {},
+    },
+  }
+  apply(mockCtxGame)
+
+  const rpt = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-weicao', turn: 3 })
+  assert.ok(!rpt.features.cooldownInjected.includes('木恩'))
+  assert.ok(!rpt.features.cooldownInjected.includes('微草'))
+  assert.ok(!rpt.features.cooldownInjected.includes('獨活'))
+  assert.ok(!rpt.features.turnMicroActions.some((x) => /^(?:木恩|微草|獨活)/.test(x.word)))
+
+  const sec = await turnSecSpec.text({ gameId: 'g-weicao', turn: 4 })
+  assert.ok(!sec.includes('木恩'))
+  assert.ok(!sec.includes('微草'))
+  assert.ok(!sec.includes('獨活'))
+})

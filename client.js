@@ -1,4 +1,4 @@
-// dsh-tavern-autoproof v1.35.0 瀏覽器側模組（分區設定面板 + 正面文風整本萃取 + ？功能說明 + 三分區校對報告）
+// dsh-tavern-autoproof v1.37.0 瀏覽器側模組（分區設定面板 + 文風與基因萃取 + 模型家族適配／AI味濃度／句法同構 + 三分區校對報告）
 window.__ModuleLoader__.load({
   id: 'dsh-tavern-autoproof',
   factory: (require) => {
@@ -153,8 +153,18 @@ window.__ModuleLoader__.load({
             fileName: meta.fileName || '',
           })
           if (res?.ok && res.styleCard) {
-            setDraft((prev) => ({ ...prev, styleCardText: res.styleCard, styleCardEnabled: true }))
-            setStatusMsg('✓ 已萃取出正面文風卡並開啟注入（請記得點擊下方儲存）')
+            setDraft((prev) => ({
+              ...prev,
+              styleCardText: res.styleCard,
+              styleCardEnabled: true,
+              ...(res.anchorsText ? { sampleAnchorsText: res.anchorsText, sampleAnchorsEnabled: true } : {}),
+              ...(res.characterVoicesText ? { characterVoices: res.characterVoicesText } : {}),
+            }))
+            const extras = []
+            if (res.anchorsCount) extras.push(`${res.anchorsCount} 段輪轉寫作範例`)
+            if (res.characterVoicesCount) extras.push(`${res.characterVoicesCount} 位角色語言基因`)
+            const extraNote = extras.length ? `（同時收錄 ${extras.join('、')}）` : ''
+            setStatusMsg(`✓ 已萃取出正面文風卡${extraNote}，請記得點擊下方「儲存至本角色卡」`)
           } else {
             setStatusMsg(`萃取失敗：${res?.error || '未回傳有效文風卡'}`)
           }
@@ -523,7 +533,7 @@ window.__ModuleLoader__.load({
                       h(
                         'div',
                         { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' } },
-                        h('span', { style: { fontSize: '13px', fontWeight: 700, color: '#7dd3fc' } }, '一鍵從小說範文或整本檔案萃取文風卡'),
+                        h('span', { style: { fontSize: '13px', fontWeight: 700, color: '#7dd3fc' } }, '一鍵從範文／整本小說萃取（同人卡／小說卡適用）'),
                         h(
                           'div',
                           { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
@@ -572,9 +582,25 @@ window.__ModuleLoader__.load({
                                 cursor: extracting ? 'wait' : 'pointer',
                               },
                             },
-                            extracting ? '萃取中…' : '一鍵萃取文風卡'
+                            extracting ? '萃取中…' : '一鍵萃取文風與基因'
                           )
                         )
+                      ),
+                      h(
+                        'div',
+                        {
+                          style: {
+                            fontSize: '11px',
+                            color: '#cbd5e1',
+                            background: 'rgba(15, 23, 42, 0.48)',
+                            border: '1px solid rgba(148, 163, 184, 0.2)',
+                            borderRadius: '6px',
+                            padding: '6px 8px',
+                            marginBottom: '8px',
+                            lineHeight: 1.5,
+                          },
+                        },
+                        '📌 適用說明：文風萃取與寫作範例輪轉主要推薦用於「同人卡／小說改編卡」；一鍵萃取會同步填入「正面文風卡」「寫作範例輪轉庫」與「多角色語言基因卡」。純原創卡或找不到參考文本時可略過本區留白，直接手動填寫下方「多角色語言基因卡」並搭配「純本地淨化」即可發揮完整效果。'
                       ),
                       uploadedBookMeta
                         ? h(
@@ -780,6 +806,15 @@ window.__ModuleLoader__.load({
       verb_triple_parallel: '動詞三連排比',
       info_dump_dialogue: '台詞設定百科科普',
       dialogue_ai_tone: '對白書面／AI 腔',
+      telegraph_short_paras: '一句一段碎句過高',
+      speech_obj_defect: '言說賓語頂替語病',
+      syntax_translationese: '敘事句法翻譯腔殼',
+      padding_verb_chain: '雙音節膨脹動詞殼',
+      isomorphic_rhythm: '相鄰句節拍同構',
+      list_prefix_run: '連續同開頭列表感',
+      embodied_overload: '生理反應連發過度',
+      cohesion_chain: '段落過度平滑承接',
+      iso_rhythm: '句拍同構重複',
     }
 
     const fmtFlags = (arr = []) => arr.map((k) => FLAG_LABELS[k] || k).join('、')
@@ -935,6 +970,32 @@ window.__ModuleLoader__.load({
           )
         )
       }
+      if (f && (f.preCleanedCount || 0) > 0) {
+        rows.push(
+          item(
+            '無損廢話起手預清理（0 Token）',
+            `已清 ${f.preCleanedCount} 處（${(f.preCleanedRemoved || []).slice(0, 3).join('、')}）`,
+            '#6ee7b7'
+          )
+        )
+      }
+      if (f && f.concentration) {
+        const lvlMap = { low: '低（自然）', mid: '中（有痕跡）', high: '高（明顯 AI 味）', severe: '極高' }
+        const c = f.concentration
+        const dampNote = (c.anchorHits > 0 || c.imperfectionHits > 0)
+          ? ` · 具體細節/口語抵銷(${c.anchorHits}/${c.imperfectionHits})`
+          : ''
+        rows.push(
+          item(
+            'AI 味綜合濃度評分',
+            `${c.score} · ${lvlMap[c.level] || c.level}${dampNote} · 語氣詞 ${c.modalDensity}/千字`,
+            c.level === 'low' ? '#6ee7b7' : c.level === 'mid' ? '#fcd34d' : '#fca5a5'
+          )
+        )
+      }
+      if (f && f.modelFamily && f.modelFamily !== 'unknown') {
+        rows.push(item('模型家族指紋適配', `${f.modelFamily} · 破折號門檻 ${f.dashLimitApplied}/千字`))
+      }
 
       const lex = report.localAudit?.lexicon
       if (lex && lex.enabled) {
@@ -980,6 +1041,50 @@ window.__ModuleLoader__.load({
           }
         }
         rows.push(item('正面文風錨點（Style Card）', styleVal, styleColor))
+
+        // 1b. 寫作範例確定性輪轉
+        let anchorVal = '未啟用'
+        let anchorColor = '#94a3b8'
+        if (f.sampleAnchorsEnabled) {
+          if ((f.sampleAnchorsTotal || 0) > 0) {
+            anchorVal = `已收錄 ${f.sampleAnchorsTotal} 段 · ${f.sampleAnchorsGenUsed > 0 ? `生成前輪轉注入 ${f.sampleAnchorsGenUsed} 段` : '下輪／重Roll起輪轉注入'}`
+            anchorColor = f.sampleAnchorsGenUsed > 0 ? '#6ee7b7' : '#fcd34d'
+          } else {
+            anchorVal = '尚未設定（同人／小說卡上傳範文會自動挑段，原創卡可留白）'
+          }
+        }
+        rows.push(item('寫作範例輪轉', anchorVal, anchorColor))
+
+        // 1c. 多角色語言基因卡
+        let voiceVal = '未設定'
+        let voiceColor = '#94a3b8'
+        if ((f.voiceProfileCount || 0) > 0) {
+          const vParts = [`監控 ${f.voiceProfileCount} 位角色`]
+          if (f.voiceGenUsed > 0) vParts.push('生成前已注入')
+          if ((f.voiceTabooHits || []).length > 0) {
+            vParts.push(`誤觸禁忌：${f.voiceTabooHits.map(x => `${x.name}(${x.phrase})`).join('、')}`)
+            voiceColor = '#fca5a5'
+          } else {
+            vParts.push('未誤觸禁忌詞')
+            voiceColor = '#6ee7b7'
+          }
+          if ((f.voiceTicsMissing || []).length > 0) {
+            vParts.push(`口癖提醒：${f.voiceTicsMissing.join('、')}`)
+          }
+          voiceVal = vParts.join(' · ')
+        }
+        rows.push(item('多角色語言基因卡', voiceVal, voiceColor))
+
+        // 1d. 文風白名單掩碼
+        rows.push(
+          item(
+            '文風白名單豁免',
+            (f.whitelistRuleCount || 0) > 0
+              ? `已登記 ${f.whitelistRuleCount} 條（本輪掃描豁免 ${f.whitelistMaskedChars || 0} 字）`
+              : '未登記（所有寫法皆參與掃描）',
+            (f.whitelistMaskedChars || 0) > 0 ? '#6ee7b7' : '#94a3b8'
+          )
+        )
 
         // 2. Verbalized Sampling
         rows.push(
@@ -1038,6 +1143,38 @@ window.__ModuleLoader__.load({
         nsParts.push(turnStruct ? `本輪檢出：${turnStruct}` : '本輪結構正常')
         if (recurStruct) nsParts.push(`跨輪提醒中：${recurStruct}`)
         rows.push(item('敘事結構指紋（StoryScope）', nsParts.join(' · '), recurStruct ? '#fcd34d' : undefined))
+
+        // 6. 碎句／稀釋／語病補充掃描
+        const deepNotes = []
+        if (f.oneSentenceParas && f.oneSentenceParas.total >= 12) {
+          deepNotes.push(`一句一段 ${Math.round((f.oneSentenceParas.ratio || 0) * 100)}%`)
+        }
+        if (f.dilution) {
+          deepNotes.push(`的字 ${f.dilution.dePerSent}/句 · bigram重複 ${Math.round((f.dilution.bigramRate || 0) * 100)}%`)
+        }
+        if ((f.speechObjDefectsCount || 0) > 0) {
+          deepNotes.push(`言說賓語語病 ${f.speechObjDefectsCount} 處`)
+        }
+        if (deepNotes.length > 0) {
+          rows.push(item('深度稀釋與語病掃描', deepNotes.join(' · '), (f.speechObjDefectsCount || 0) > 0 ? '#fcd34d' : undefined))
+        }
+        const extraDiag = []
+        if ((f.isomorphicPairs || 0) > 0 || (f.isomorphicTriples || 0) > 0) {
+          extraDiag.push(`句構同構 ${f.isomorphicPairs} 組(三連 ${f.isomorphicTriples})`)
+        }
+        if ((f.listPrefixRuns || 0) > 0) extraDiag.push(`列表同字開頭 ${f.listPrefixRuns} 組`)
+        if ((f.translationeseCount || 0) > 0) extraDiag.push(`句法翻譯腔／膨脹詞 ${f.translationeseCount} 處`)
+        if ((f.synonymSwapWindows || 0) > 0) extraDiag.push(`刻意換詞窗 ${f.synonymSwapWindows}`)
+        if (f.mtldEstimate != null) extraDiag.push(`MTLD ${f.mtldEstimate}`)
+        if ((f.maxCohesionChain || 0) >= 6) extraDiag.push(`過渡連環 ${f.maxCohesionChain} 段`)
+        if (f.embodiedOverload) extraDiag.push(`生理詞連發 ${f.embodiedHits} 處`)
+        if (extraDiag.length > 0) {
+          rows.push(item('句拍／翻譯腔／StoryScope+', extraDiag.join(' · ')))
+        }
+        if ((f.addressWarnings || []).length > 0) {
+          const aw = f.addressWarnings.map(w => `${w.baseName}（${Object.entries(w.counts).map(([k, v]) => `${k}×${v}`).join('/')}）`).join('；')
+          rows.push(item('稱謂變體混用提醒', aw, '#fcd34d'))
+        }
       } else {
         // 兼容舊版歷史報告
         if (report.entityLockFixes > 0) {
@@ -1078,10 +1215,16 @@ window.__ModuleLoader__.load({
         const guardInfo = report.tier2.guardRejected ? `，防幻覺退回 ${report.tier2.guardRejected} 段` : ''
         const bonInfo = report.tier2.bestOfNRuns ? `，Best-of-N 擇優 ${report.tier2.bestOfNRuns} 次（勝出 ${report.tier2.bestOfNWins || 0} 次）` : ''
         const retryInfo = report.tier2.lazyRetries ? `，照抄糾偏重試 ${report.tier2.lazyRetries} 次` : ''
+        const extraGuardInfo = [
+          report.tier2.dedupReverted ? `跨段去重退回 ${report.tier2.dedupReverted} 段` : '',
+          report.tier2.deletionGuardTripped ? '已觸發刪減比例護欄' : '',
+        ].filter(Boolean).join('、')
         rows.push(
           item(
             '第二層局部校對狀態',
-            report.tier2.error ? `異常：${report.tier2.error}` : `完成（處理 ${report.tier2.segments} 段${guardInfo}${bonInfo}${retryInfo}）`,
+            report.tier2.error
+              ? `異常：${report.tier2.error}`
+              : `完成（處理 ${report.tier2.segments} 段${guardInfo}${bonInfo}${retryInfo}${extraGuardInfo ? `，${extraGuardInfo}` : ''}）`,
             report.tier2.error ? '#fca5a5' : '#6ee7b7'
           )
         )
@@ -1143,7 +1286,7 @@ window.__ModuleLoader__.load({
             overflowY: 'auto',
           },
         },
-        h('h3', { style: { margin: '0 0 8px', fontSize: '16px' } }, `AutoProof v1.35 校對報告（第 ${turn} 輪）`),
+        h('h3', { style: { margin: '0 0 8px', fontSize: '16px' } }, `AutoProof v1.37 校對報告（第 ${turn} 輪）`),
         h('div', null, ...rows),
         report.writeError
           ? h(
