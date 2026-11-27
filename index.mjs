@@ -71,6 +71,9 @@ import {
   analyzeTurnBehavioralMetrics,
   deriveBehavioralAdaptation,
   scanAndCleanMetaLeakage,
+  computeL1StyleFingerprint,
+  classifyAnchorScene,
+  deriveStyleDnaOverrides,
 } from './lib/local-rules.mjs'
 
 export const name = 'dsh-tavern-autoproof'
@@ -1662,8 +1665,14 @@ export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aesthetic
     ? '5. 語文純淨度：統一使用簡體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
     : '5. 語文純淨度：統一使用繁體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
   const parts = [
-    '你是中文小說的局部文體編輯（澄文 · AutoProof v1.38）。你的職責是修正被指出的「機械化敘事習慣與 AI 腔對白」，而不是替作者重寫故事。',
+    '你是中文小說的局部文體編輯（澄文 · AutoProof v1.39）。你的職責是修正被指出的「機械化敘事習慣與 AI 腔對白」，而不是替作者重寫故事。',
     '請判斷候選是否構成機械模板：未命中的正常語句盡量保留原樣；但凡【精準定位命中】明確點出 `[對白AI腔]`、隱性對仗金句（「不X了。我Y。」「V的是A，V的是B」「沒錯，錯在…」）、機械數字遞進或無意義複位動作，屬於已確診病灶，務必實質改寫成真人隨口說的話，不得原句照抄。',
+    '',
+    '【規則衝突仲裁優先級（輕量模型執行序，務必按序裁決）】',
+    '1. 劇情事實、時間因果與人物設定不可改動（最高邊界）。',
+    '2. 本卡【正面文風基準（Style DNA）】與多角色語言基因優先：若去 AI 味習慣規則與目標文風衝突（例如原作明確偏愛極短句、留白省略號或特定破折號呼吸），一律以目標文風為準，勿誤傷風格特徵。',
+    '3. 已確診之 P0 機械病灶與【精準定位命中】必須實質改寫，不可原文照抄。',
+    '4. 未命中病灶且讀來自然的語句從寬逐字保留。',
     '',
     '【最高優先級：最小改動與有效去 AI 味邊界】',
     '- 只改本段中有問題的局部，不編造新劇情，也不把文章改寫成另一種腔調。',
@@ -1861,7 +1870,8 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     out.push(cleanVoice)
   }
   if (hints.length) {
-    out.push(`【敘事文體微調提醒（AutoProof）】\n${hints.slice(0, 8).map(h => `- ${h}`).join('\n')}`)
+    const conflictNote = cleanCard ? '- ※ 優先級仲裁：若下方提醒與上方【正面文風參考（Style Card）】衝突，一律以正面文風為準。\n' : ''
+    out.push(`【敘事文體微調提醒（AutoProof）】\n${conflictNote}${hints.slice(0, 8).map(h => `- ${h}`).join('\n')}`)
   }
   return out.join('\n\n')
 }
@@ -2111,6 +2121,7 @@ export function apply(ctx) {
       dynamicImages: extra.dynamicImages || {},
       structuralFlags: [...new Set(extra.structuralFlags || [])],
       behavior: extra.behavior || null,
+      sceneKind: extra.sceneKind || '',
     }
     const existing = history.findIndex(x => x.turn === turn)
     if (existing >= 0) history[existing] = entry
@@ -2154,7 +2165,7 @@ export function apply(ctx) {
 
   // 宿主 gameSettings 上限為 1–20 項；此處保留核心 12 項，完整分頁設定與 ? 說明請使用輸入列「校對設定」面板
   ctx.tavern.gameSettings({
-    title: '澄文 · AutoProof v1.38',
+    title: '澄文 · AutoProof v1.39',
     fields: [
       { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。完整分項設定與 ? 說明請點輸入列「校對設定」。', default: true },
       {
@@ -2229,7 +2240,10 @@ export function apply(ctx) {
           const styleCardText = cfg.styleCardEnabled !== false ? String(cfg.styleCardText || '').trim() : ''
           const anchorsPool = cfg.sampleAnchorsEnabled !== false ? String(cfg.sampleAnchorsText || '').trim() : ''
           const rotOffset = history.length ? Number(history[history.length - 1]?.turn || history.length) : 0
-          const rotated = anchorsPool ? rotateSampleAnchors(anchorsPool, { offset: rotOffset, limit: 2 }) : { selected: [], total: 0 }
+          const lastSceneKind = history.length ? String(history[history.length - 1]?.sceneKind || '') : ''
+          const rotated = anchorsPool
+            ? rotateSampleAnchors(anchorsPool, { offset: rotOffset, limit: 2, sceneHint: lastSceneKind })
+            : { selected: [], total: 0, matchedScene: '', matchedCount: 0 }
           const voiceProfiles = parseCharacterVoices(cfg.characterVoices || '')
           const voiceBlock = formatVoiceInjectionBlock(voiceProfiles)
           const verbalizedSampling = Boolean(cfg.verbalizedSampling)
@@ -2299,6 +2313,8 @@ export function apply(ctx) {
               styleCardChars: styleCardText.length,
               sampleAnchorsUsed: rotated.selected.length,
               sampleAnchorsTotal: rotated.total,
+              sampleAnchorsScene: rotated.matchedScene || '',
+              sampleAnchorsSceneMatched: rotated.matchedCount || 0,
               voiceProfilesCount: voiceProfiles.length,
               verbalizedSampling,
               utteranceGateActive,
@@ -2385,10 +2401,15 @@ export function apply(ctx) {
         const behaviorAdapt = (cfg.modelFamilyAdapt !== 'off')
           ? deriveBehavioralAdaptation(historyBeforeTurn)
           : { active: false, dashLimit: 2.0, hints: [], openingMonotony: '', summary: '' }
+        const extraStyleCard = cfg.styleCardEnabled !== false ? String(cfg.styleCardText || '').trim() : ''
+        const styleDnaOverrides = deriveStyleDnaOverrides([cardSpec.styleGuide, extraStyleCard].filter(Boolean).join('\n'))
         const effectiveLimits = cardSpec.limits ? { ...cfg, ...cardSpec.limits } : { ...cfg }
         if (effectiveLimits.dashLimit == null) effectiveLimits.dashLimit = 2.0
         if (cfg.modelFamilyAdapt !== 'off' && behaviorAdapt.active && effectiveLimits.dashLimit === 2.0) {
           effectiveLimits.dashLimit = behaviorAdapt.dashLimit
+        }
+        if (styleDnaOverrides.dashLimitFloor > 0 && effectiveLimits.dashLimit < styleDnaOverrides.dashLimitFloor) {
+          effectiveLimits.dashLimit = styleDnaOverrides.dashLimitFloor
         }
         const segs = splitSegments(currentRaw)
 
@@ -2509,6 +2530,7 @@ export function apply(ctx) {
         }
         if (rhythmAudit.enabled) {
           for (const w of rhythmAudit.warnings) {
+            if (styleDnaOverrides.exemptTelegraph && /一句一段/.test(w)) continue
             violations.push({ key: 'local_rhythm_health', label: w })
           }
         }
@@ -2575,9 +2597,12 @@ export function apply(ctx) {
         })
 
         const turnBehavior = analyzeTurnBehavioralMetrics(visible, rhythmAudit, metrics)
+        const turnSceneKind = classifyAnchorScene(visible)
         const combinedStructFlags = [...(narrativeFp.flags || [])]
         if (infoDumpAudit.count > 0) combinedStructFlags.push('info_dump_dialogue')
-        if (rhythmAudit.oneSentenceParas?.triggered) combinedStructFlags.push('telegraph_short_paras')
+        if (rhythmAudit.oneSentenceParas?.triggered && !styleDnaOverrides.exemptTelegraph) {
+          combinedStructFlags.push('telegraph_short_paras')
+        }
         const openingMonotonyNow = deriveBehavioralAdaptation([...historyBeforeTurn.slice(-2), { behavior: turnBehavior }]).openingMonotony
         if (openingMonotonyNow) {
           combinedStructFlags.push('opening_monotony')
@@ -2592,6 +2617,7 @@ export function apply(ctx) {
           skeletons: skeletonCounts,
           structuralFlags: combinedStructFlags,
           behavior: turnBehavior,
+          sceneKind: turnSceneKind,
           excludeTerms: excludedCooldownTerms,
         })
         const recurringStyleKeys = historyRes.recurringKeys
@@ -2617,9 +2643,10 @@ export function apply(ctx) {
           if (!violations.some(v => v.key === s.key)) violations.push(s)
         }
 
-        const extraStyleCard = cfg.styleCardEnabled !== false ? String(cfg.styleCardText || '').trim() : ''
         const anchorsRawText = cfg.sampleAnchorsEnabled !== false ? String(cfg.sampleAnchorsText || '').trim() : ''
-        const anchorsMeta = anchorsRawText ? rotateSampleAnchors(anchorsRawText, { offset: turn, limit: 2 }) : { selected: [], total: 0 }
+        const anchorsMeta = anchorsRawText
+          ? rotateSampleAnchors(anchorsRawText, { offset: turn, limit: 2, sceneHint: turnSceneKind })
+          : { selected: [], total: 0, matchedScene: '', matchedCount: 0 }
         const lastHook = lastGenHooks.get(gameId) || null
         let scriptViolation = null
         const report = {
@@ -2646,9 +2673,14 @@ export function apply(ctx) {
             styleCardChars: extraStyleCard.length,
             styleCardGenUsed: Boolean(lastHook?.styleCardApplied),
             styleCardTier2Used: false,
+            styleDnaOverrideActive: styleDnaOverrides.active,
+            styleDnaOverrideNotes: styleDnaOverrides.notes || [],
+            turnSceneKind,
             sampleAnchorsEnabled: cfg.sampleAnchorsEnabled !== false,
             sampleAnchorsTotal: anchorsMeta.total,
             sampleAnchorsGenUsed: lastHook?.sampleAnchorsUsed || 0,
+            sampleAnchorsScene: lastHook?.sampleAnchorsScene || '',
+            sampleAnchorsSceneMatched: lastHook?.sampleAnchorsSceneMatched || 0,
             voiceProfileCount: voiceProfiles.length,
             voiceGenUsed: lastHook?.voiceProfilesCount || 0,
             voiceTabooHits: voiceAudit.tabooHits,
@@ -3687,8 +3719,10 @@ export function apply(ctx) {
       scriptHint,
       '',
       '===STYLE_CARD===',
-      '輸出 130～240 字的「正面文風指南（Style Card）」，必須涵蓋：1) 句長、短句比例與分段換行節奏；2) 對話接話密度、口語停頓與調侃／留白方式（對話可自然直接接話，不必建議每句都加「稱謂＋微動作＋說」）；3) 動作與感官描寫顆粒度；4) 情緒表達的克制或張力特徵。',
-      '嚴格禁止在 ===STYLE_CARD=== 中出現原作人名、地名、書名、組織、具體道具或死板數字公式，也不要寫「不准/禁止/不要」負面清單。',
+      '輸出 130～260 字的「正面文風指南（Style Card）」，必須包含：',
+      '1) 第一行寫「【量化節奏基準】」直接轉錄客觀語言指紋中的短句(<=15字)佔比、段均句數、破折號/省略號/括號千字密度（方便輕量模型精準執行）；',
+      '2) 後續緊接句長與段落節奏、對話接話密度與留白方式、動作與感官顆粒度、情緒表達特徵。',
+      '嚴格禁止在 ===STYLE_CARD=== 中出現原作人名、地名、書名或組織，也不要寫「不准/禁止/不要」負面清單。',
       '',
       '===CHARACTER_VOICES===',
       `若範文中出現有明確角色名的對話與性格差異，請列出最多 6 位關鍵角色，每行 1 位，嚴格使用格式：${voiceSchemaHint}（某一欄位空白可省略該小項，切勿虛構角色或編造書中不存在的角色）；若範文無人名對白或無法分辨角色，請只輸出 NONE。`,
@@ -3727,7 +3761,7 @@ export function apply(ctx) {
         characterVoicesText = serializeCharacterVoices(parsedVoices, toScript)
         characterVoicesCount = parseCharacterVoices(characterVoicesText).length
       }
-      const autoAnchors = extractStyleAnchorsFromText(raw, { maxAnchors: 6 })
+      const autoAnchors = extractStyleAnchorsFromText(raw, { maxAnchors: 6, tagScene: true })
       const anchorsText = autoAnchors.join('\n---\n')
       emitLog({
         evt: 'extract-style',
@@ -3847,4 +3881,7 @@ export const __test = Object.freeze({
   analyzeTurnBehavioralMetrics,
   deriveBehavioralAdaptation,
   scanAndCleanMetaLeakage,
+  computeL1StyleFingerprint,
+  classifyAnchorScene,
+  deriveStyleDnaOverrides,
 })

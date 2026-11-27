@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.39.0
+
+### Flash 級輕量模型精準化與風格衝突仲裁（借鑑 `writing-dna-skill` 方法論）
+- **L1 客觀量化語言指紋 (`computeL1StyleFingerprint`)**：
+  - 於 [lib/local-rules.mjs](lib/local-rules.mjs) 與瀏覽器採樣端補齊統計：`<=15` 字短句與 `>=50` 字長句佔比、段落平均句數，以及破折號／省略號／括號千字密度；一鍵萃取文風時要求同時保留一句可執行【量化節奏基準】，提升 Flash 級模型對文字呼吸感的遵循度。
+- **文風 DNA 優先於一般去 AI 味規則（衝突仲裁 ＋ 動態閾值覆蓋，`deriveStyleDnaOverrides`）**：
+  - `buildRewriteSystem` 與 `turnSection` 確立明確 4 階優先級（`劇情事實 ＞ 本卡文風基準／角色基因 ＞ 已確診 P0 病灶 ＞ 從寬保留`）。
+  - 當目標文風基準明確屬高破折號、極短句成段（如短句 `>=55%` 或段均 `<=1.3` 句）或高留白省略號流派時，自動調升 `dashLimit` 下限或豁免 `telegraph_short_paras`／「一句一段」告警，並在報告中標註 `DNA 優先` 狀態。
+- **場景感知寫作範例輪轉 (`classifyAnchorScene` / `extractStyleAnchorsFromText` / `rotateSampleAnchors`)**：
+  - 提取寫作範例時自動標記 `[對白交鋒]`、`[動作緊張]`、`[心理張力]`、`[日常過場]`；下一輪 `turnSection` 依上一輪場景類型（0 Token）優先輪轉最匹配的 2 段範例注入，報告頁同步顯示當前對齊場景。
+
 ## 1.38.0
 
 ### 品牌標題升級

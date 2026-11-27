@@ -1292,3 +1292,125 @@ test('v1.38 核心升級：修辭骨架冷卻衰減、純文字行為自適應�
   assert.equal(latestText, origTurn2)
   assert.ok(tickAfterUndo.ok)
 })
+
+test('v1.39 借鑑升級：L1 量化語言指紋、文風 DNA 優先仲裁與閾值覆蓋、場景感知範例輪轉', async () => {
+  const {
+    computeL1StyleFingerprint,
+    classifyAnchorScene,
+    extractStyleAnchorsFromText,
+    rotateSampleAnchors,
+    deriveStyleDnaOverrides,
+    buildRewriteSystem,
+  } = __test
+
+  // 1. L1 量化語言指紋（<=15字短句、>=50字長句、段均句數、破折號/省略號/括號千字密度）
+  const l1Text = [
+    '風停了。他站在門口。',
+    '「你來了？」她抬頭看了他一眼，「進來說吧。」',
+    '屋裡沒有開燈——窗簾拉得嚴嚴實實（大概一整天沒拉開過）……只有桌角的茶杯還帶著一點餘溫。',
+    '他默默走進去，看著桌上那張寫滿紅筆批註、橫豎劃掉又重寫了三次的長條便箋紙上歪歪扭扭留著的幾行叮囑，久久沒有再多說什麼。',
+  ].join('\n')
+  const fp = computeL1StyleFingerprint(l1Text)
+  assert.ok(fp.totalChars > 50)
+  assert.ok(fp.shortSentRatio > 0)
+  assert.ok(fp.longSentRatio >= 0)
+  assert.ok(fp.avgParaSents >= 1)
+  assert.ok(fp.dashPer1k > 0)
+  assert.ok(fp.ellipsisPer1k > 0)
+  assert.ok(fp.parensPer1k > 0)
+  assert.ok(fp.summary.includes('短句(<=15字)') && fp.summary.includes('破折號'))
+
+  // 2. 文風 DNA 優先仲裁與量化閾值自動豁免
+  const overrides = deriveStyleDnaOverrides(
+    '【量化節奏基準】短句(<=15字) 62%｜段均 1.2 句｜破折號 4.2/千字｜省略號 5.0/千字。\n整體善用破折號與短句成段留白。'
+  )
+  assert.equal(overrides.active, true)
+  assert.equal(overrides.exemptTelegraph, true)
+  assert.equal(overrides.allowHighDash, true)
+  assert.equal(overrides.allowHighEllipsis, true)
+  assert.ok(overrides.dashLimitFloor >= 5.0)
+
+  const sysPrompt = buildRewriteSystem('trad', '短句留白為主。', 'deep', '', false)
+  assert.ok(sysPrompt.includes('【規則衝突仲裁優先級'))
+  assert.ok(sysPrompt.indexOf('本卡【正面文風基準（Style DNA）】') < sysPrompt.indexOf('核心編修原則'))
+
+  // 3. 場景感知範例標籤與場景對齊輪轉
+  assert.equal(classifyAnchorScene('「別吵。」她壓低聲音，「後面有人跟過來了。」'), 'dialogue')
+  assert.equal(classifyAnchorScene('他踹開鐵門衝進走廊，反手扣住對方的手腕往牆上壓制。'), 'action')
+  assert.equal(classifyAnchorScene('她冷笑了一聲，指節卻微微泛白，屋裡空氣凝重得彷彿只剩壓抑的沉默。'), 'tension')
+
+  const richAnchors = [
+    '[日常過場] ' + '午後陽光慢慢斜過木桌，他倒了半杯溫水靠在椅背上看書，順手翻過發黃的那一頁紙張。',
+    '[動作緊張] ' + '他踹開門衝進雨巷，反手扣住那人的肩胛往磚牆上狠狠壓制，傘骨在混亂裡徹底掀翻斷裂。',
+    '[對白交鋒] ' + '「你早知道了對不對？」她冷冷盯著他問。「如果我說昨天才看到名單，你會信我一次嗎？」',
+    '[動作緊張] ' + '她翻身躲過迎面砸來的鐵棍，順勢抽出袖口裡的短刃逼近半步，腳尖踩碎地面積水濺出泥點。',
+  ].join('\n---\n')
+
+  const actionRot = rotateSampleAnchors(richAnchors, { offset: 0, limit: 2, sceneHint: 'action' })
+  assert.equal(actionRot.matchedScene, 'action')
+  assert.equal(actionRot.matchedCount, 2)
+  assert.ok(actionRot.selected.every((x) => x.startsWith('[動作緊張]')))
+
+  const extractedAnchors = extractStyleAnchorsFromText(
+    [
+      '午後陽光慢慢斜過木桌，他倒了半杯溫水靠在椅背上看書，順手翻過發黃的那一頁紙張與舊筆記。',
+      '「你早知道了對不對？」她站在燈下這樣問了一句，隨即轉過臉去看著走廊盡頭的玻璃門窗。',
+    ].join('\n\n'),
+    { maxAnchors: 4, tagScene: true }
+  )
+  assert.ok(extractedAnchors.some((a) => /^\[(?:對白交鋒|動作緊張|心理張力|日常過場)\]/.test(a)))
+
+  // 4. E2E Mock：文風 DNA 豁免（高破折號＋短句成段不誤報）＋ 跨輪場景對齊輪轉注入
+  const handlers = new Map()
+  let turnSectionSpec = null
+  const mockCtxV139 = {
+    _disableLog: true,
+    tavern: {
+      apiVersion: 8,
+      gameSettings() {},
+      turnSection(spec) { turnSectionSpec = spec },
+      onTurnSettled() {},
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { handlers.set(name, fn) },
+      async backgroundModel() { return { provider: 'mock', model: 'gemini-2.5-flash' } },
+      async getGameSettings() {
+        return {
+          enabled: true,
+          tier2: false,
+          styleCardEnabled: true,
+          styleCardText: '【量化節奏基準】短句(<=15字) 64%｜段均 1.1 句｜破折號 4.5/千字。',
+          sampleAnchorsEnabled: true,
+          sampleAnchorsText: richAnchors,
+        }
+      },
+      async getCard() { return { name: '林硯', description: '冷冽動作向短劇。' } },
+      async getTurnState() { return { turn: 1 } },
+      async getTurn() {
+        return {
+          turn: 1,
+          textVersion: 'v1',
+          rawText: Array.from({ length: 14 }, (_, i) => i % 2 === 0
+            ? '他踹開門衝進雨巷——反手扣住那人肩胛往牆上壓制。'
+            : '閃避。翻身。腳步截住退路。'
+          ).join('\n'),
+        }
+      },
+      async readTurnData() { return null },
+      async saveTurnData() {},
+    },
+  }
+  apply(mockCtxV139)
+
+  const rpt139 = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-v139', turn: 1 })
+  assert.equal(rpt139.features.styleDnaOverrideActive, true)
+  assert.ok(rpt139.features.dashLimitApplied >= 5.5)
+  assert.equal(rpt139.features.turnSceneKind, 'action')
+  assert.ok(!rpt139.features.turnStructuralFlags.includes('telegraph_short_paras'))
+  assert.ok(!rpt139.violations.some((v) => /一句一段/.test(v.label)))
+
+  // 下一輪 turnSection 應優先挑出 [動作緊張] 的寫作範例，並在有微調提醒時帶上規則衝突仲裁
+  const injected = await turnSectionSpec.text({ gameId: 'g-v139', turn: 2 })
+  assert.ok(injected.includes('[動作緊張]'))
+  assert.ok(injected.includes('【正面文風參考'))
+})

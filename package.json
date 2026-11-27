@@ -1,7 +1,7 @@
 {
   "name": "dsh-tavern-autoproof",
-  "version": "1.38.0",
-  "description": "澄文-AutoProof-自適應敘事精修與去AI味引擎（v1.38.0：Tier 2 批次合併與空轉過濾、報告內段落 Diff 與一鍵還原鎖定、修辭骨架指紋衰減冷卻、純文字近 3 輪行為自適應、後設洩漏清理與開場單調度監測）",
+  "version": "1.39.0",
+  "description": "澄文-AutoProof-自適應敘事精修與去AI味引擎（v1.39.0：L1 量化風格指紋、文風 DNA 優先仲裁與閾值豁免、場景感知寫作範例輪轉、Flash 輕量模型執行序優化，含 Tier 2 批次、Diff／一鍵還原與全皮膚自適應高定 UI）",
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs"

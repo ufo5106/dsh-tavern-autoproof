@@ -1,4 +1,4 @@
-// dsh-tavern-autoproof v1.38.0 瀏覽器側模組（澄文 · AutoProof：全皮膚自適應高定 UI + 環形濃度儀 + 連續旋轉載入 + Diff／一鍵還原）
+// dsh-tavern-autoproof v1.39.0 瀏覽器側模組（澄文 · AutoProof：L1 量化風格指紋 + 文風 DNA 優先仲裁 + 場景感知輪轉 + 全皮膚自適應高定 UI）
 window.__ModuleLoader__.load({
   id: 'dsh-tavern-autoproof',
   factory: (require) => {
@@ -8,11 +8,11 @@ window.__ModuleLoader__.load({
     function ensureAutoProofStyles() {
       if (typeof document === 'undefined' || !document.head) return
       const existing = document.getElementById('dsh-autoproof-ui-style')
-      if (existing && existing.dataset.ver === '1.38-adaptive') return
+      if (existing && existing.dataset.ver === '1.39-adaptive') return
       if (existing) existing.remove()
       const style = document.createElement('style')
       style.id = 'dsh-autoproof-ui-style'
-      style.dataset.ver = '1.38-adaptive'
+      style.dataset.ver = '1.39-adaptive'
       style.textContent = `
         @keyframes ap-spin {
           from { transform: rotate(0deg); }
@@ -331,25 +331,36 @@ window.__ModuleLoader__.load({
         }
         scanText = blocks.join('\n')
       }
-      const lines = scanText.split('\n').map((l) => l.trim()).filter(Boolean)
-      const dialogueLines = lines.filter((l) => /^[「『“"‘']/.test(l) || /[」』”"]\s*$/.test(l))
-      const dialogueRatio = lines.length ? Math.round((dialogueLines.length / lines.length) * 100) : 0
+      const bodyLines = scanText.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !CHAPTER_RE.test(l))
+      const dialogueLines = bodyLines.filter((l) => /^[「『“"‘']/.test(l) || /[」』”"]\s*$/.test(l))
+      const dialogueRatio = bodyLines.length ? Math.round((dialogueLines.length / bodyLines.length) * 100) : 0
       const sentLens = scanText
         .split(/[。！？!?\n]+/)
         .map((s) => s.replace(/[\s「」『』“”"（）()《》…—，、；：,.]/g, '').length)
         .filter((n) => n >= 2)
-      const avgSentLen = sentLens.length
-        ? Math.round((sentLens.reduce((a, b) => a + b, 0) / sentLens.length) * 10) / 10
+      const sentCount = sentLens.length
+      const avgSentLen = sentCount
+        ? Math.round((sentLens.reduce((a, b) => a + b, 0) / sentCount) * 10) / 10
         : 0
-      const shortSentRatio = sentLens.length
-        ? Math.round((sentLens.filter((n) => n <= 12).length / sentLens.length) * 100)
+      const shortSentRatio = sentCount
+        ? Math.round((sentLens.filter((n) => n <= 15).length / sentCount) * 100)
         : 0
-      const paraLens = lines.filter((l) => !CHAPTER_RE.test(l)).map((l) => l.replace(/\s+/g, '').length)
+      const longSentRatio = sentCount
+        ? Math.round((sentLens.filter((n) => n >= 50).length / sentCount) * 100)
+        : 0
+      const paraLens = bodyLines.map((l) => l.replace(/\s+/g, '').length).filter((n) => n > 0)
       const avgParaLen = paraLens.length
         ? Math.round(paraLens.reduce((a, b) => a + b, 0) / paraLens.length)
         : 0
+      const avgParaSents = bodyLines.length
+        ? Math.round((sentCount / bodyLines.length) * 10) / 10
+        : 0
+      const scanChars = Math.max(1, scanText.replace(/\s+/g, '').length / 1000)
+      const dashPer1k = Math.round((((scanText.match(/——|──/g) || []).length) / scanChars) * 10) / 10
+      const ellipsisPer1k = Math.round((((scanText.match(/……|\.{3,}/g) || []).length) / scanChars) * 10) / 10
+      const parensPer1k = Math.round((((scanText.match(/[（(][^）)\n]{1,40}[）)]/g) || []).length) / scanChars) * 10) / 10
       const wanLabel = totalChars >= 10000 ? `約 ${(totalChars / 10000).toFixed(1)} 萬字` : `${totalChars} 字`
-      const statsSummary = `【客觀語言指紋（${wanLabel}）】對話行佔比 ${dialogueRatio}%｜平均句長 ${avgSentLen} 字｜短句（<=12字）佔比 ${shortSentRatio}%｜平均段長 ${avgParaLen} 字`
+      const statsSummary = `【客觀語言指紋（${wanLabel}）】對話行佔比 ${dialogueRatio}%｜平均句長 ${avgSentLen} 字｜短句(<=15字) ${shortSentRatio}%｜長句(>=50字) ${longSentRatio}%｜段均 ${avgParaSents} 句(${avgParaLen}字)｜破折號 ${dashPer1k}/千字｜省略號 ${ellipsisPer1k}/千字｜括號 ${parensPer1k}/千字`
 
       if (src.length <= 4600) {
         return { totalChars, statsSummary, previewText: `${statsSummary}\n\n${src}` }
@@ -689,7 +700,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { style: { minWidth: 0 } },
-              h('h3', { className: 'ap-title' }, '澄文 · AutoProof v1.38 設定'),
+              h('h3', { className: 'ap-title' }, '澄文 · AutoProof v1.39 設定'),
               h('div', { className: 'ap-sub' }, '點擊各項目 ? 查看細節 · 配色自動跟隨酒館皮膚')
             )
           ),
@@ -1371,6 +1382,9 @@ window.__ModuleLoader__.load({
               apps.push(report.tier2?.ran ? '已待命' : '本輪原文免修；下輪／重Roll生成會注入')
             }
             styleVal = `已啟用（${f.styleCardChars} 字）· ${apps.join(' ＋ ')}`
+            if (f.styleDnaOverrideActive && (f.styleDnaOverrideNotes || []).length > 0) {
+              styleVal += ` · DNA 優先（${f.styleDnaOverrideNotes.join('／')}）`
+            }
             styleColor = (f.styleCardGenUsed || f.styleCardTier2Used) ? 'var(--ap-good)' : 'var(--ap-warn)'
           } else {
             styleVal = '尚未設定內容（可至「正面文風 ✨」上傳小說萃取）'
@@ -1379,12 +1393,16 @@ window.__ModuleLoader__.load({
         }
         rows.push(item('正面文風錨點（Style Card）', styleVal, styleColor))
 
-        // 1b. 寫作範例確定性輪轉
+        // 1b. 寫作範例確定性輪轉（含場景感知對齊）
         let anchorVal = '未啟用'
         let anchorColor = 'var(--ap-muted)'
+        const sceneLabels = { dialogue: '對白交鋒', action: '動作緊張', tension: '心理張力', daily: '日常過場' }
         if (f.sampleAnchorsEnabled) {
           if ((f.sampleAnchorsTotal || 0) > 0) {
-            anchorVal = `已收錄 ${f.sampleAnchorsTotal} 段 · ${f.sampleAnchorsGenUsed > 0 ? `生成前輪轉注入 ${f.sampleAnchorsGenUsed} 段` : '下輪／重Roll起輪轉注入'}`
+            const sceneNote = f.sampleAnchorsScene
+              ? ` · 場景對齊「${sceneLabels[f.sampleAnchorsScene] || f.sampleAnchorsScene}」`
+              : ''
+            anchorVal = `已收錄 ${f.sampleAnchorsTotal} 段 · ${f.sampleAnchorsGenUsed > 0 ? `生成前輪轉注入 ${f.sampleAnchorsGenUsed} 段` : '下輪／重Roll起輪轉注入'}${sceneNote}`
             anchorColor = f.sampleAnchorsGenUsed > 0 ? 'var(--ap-good)' : 'var(--ap-warn)'
           } else {
             anchorVal = '尚未設定（同人／小說卡上傳範文會自動挑段，原創卡可留白）'
@@ -1756,7 +1774,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { style: { minWidth: 0 } },
-              h('h3', { className: 'ap-title', style: { fontSize: '15px' } }, `澄文 · AutoProof v1.38 校對報告`),
+              h('h3', { className: 'ap-title', style: { fontSize: '15px' } }, `澄文 · AutoProof v1.39 校對報告`),
               h('div', { className: 'ap-sub' }, `第 ${turn} 輪 · 配色與字體自動跟隨酒館皮膚`)
             )
           ),

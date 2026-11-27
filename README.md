@@ -1,8 +1,8 @@
 # 澄文-AutoProof-自適應敘事精修與去AI味引擎
 
-> **LucidProse · AutoProof (`v1.38.0`)** —— 專為 [DSH Tavern](https://github.com/flizzywine/dsh-tavern) 打造的中文互動小說／長篇角色扮演 **生成前行為導航、純本地 0-Token 淨化、批次精編與可回溯校審引擎**。
+> **LucidProse · AutoProof (`v1.39.0`)** —— 專為 [DSH Tavern](https://github.com/flizzywine/dsh-tavern) 打造的中文互動小說／長篇角色扮演 **生成前行為導航、純本地 0-Token 淨化、批次精編與可回溯校審引擎**。
 
-[![Version](https://img.shields.io/badge/version-v1.38.0-10b981)](#v1380-%E6%A0%B8%E5%BF%83%E6%9E%B6%E6%A7%8B%E8%88%87%E8%83%BD%E5%8A%9B%E7%9F%A9%E9%99%A3)
+[![Version](https://img.shields.io/badge/version-v1.39.0-10b981)](#v1390-%E6%A0%B8%E5%BF%83%E6%9E%B6%E6%A7%8B%E8%88%87%E8%83%BD%E5%8A%9B%E7%9F%A9%E9%99%A3)
 [![Platform](https://img.shields.io/badge/host-DSH%20Tavern-38bdf8)](#%E5%AE%89%E8%A3%9D%E8%88%87%E5%B9%B3%E6%BB%91%E5%8D%87%E7%B4%9A)
 [![Dependency](https://img.shields.io/badge/dependencies-zero%20(Node%20ESM)-6ee7b7)](#%E6%B8%AC%E8%A9%A6%E8%88%87%E8%A8%BA%E6%96%B7)
 
@@ -14,7 +14,7 @@
 
 **澄文 · AutoProof** 秉持 **「最小干預、留住角色靈魂、純本地優先、改後可審可退」** 四項核心原則，在不更動既有事件、因果與角色關係的前提下，透過四階段自適應流水線把文本拉回真實、乾淨、有呼吸感的真人敘事。
 
-> **平滑升級保證**：為確保所有老用戶零痛升級，底層套件識別 ID（`dsh-tavern-autoproof`）與事件通道維持不變；從舊版升級至 **v1.38.0** 後，既有**正面文風卡、寫作範例、多角色語言基因卡、專名鎖、白名單與歷史校對資料**均完整繼承，無需任何重新設定。
+> **平滑升級保證**：為確保所有老用戶零痛升級，底層套件識別 ID（`dsh-tavern-autoproof`）與事件通道維持不變；從舊版升級至 **v1.39.0** 後，既有**正面文風卡、寫作範例、多角色語言基因卡、專名鎖、白名單與歷史校對資料**均完整繼承，無需任何重新設定。
 
 ---
 
@@ -30,9 +30,15 @@ flowchart LR
 
 ---
 
-## v1.38.0 核心架構與能力矩陣
+## v1.39.0 核心架構與能力矩陣
 
-### 一、高效率批次精編與可回溯審稿（v1.38 核心升級）
+### 一、v1.39 輕量模型精準化 ＋ 高效率批次精編與可回溯審稿
+
+- **L1 量化風格指紋 (`computeL1StyleFingerprint`) ＋ 規則衝突仲裁優先級（Flash 級模型專項強化）**
+  - 本地 0-Token 計算「短句（<=15字）與長句（>=50字）佔比、段落平均句數、破折號／省略號／括號千字密度」，在萃取正面文風卡時自動寫入簡短【量化節奏基準】，幫助 Flash 級輕量模型準確抓到目標文體的實際句法呼吸。
+  - `buildRewriteSystem` 與 `turnSection` 新增明確的四階 **規則衝突仲裁優先級**：`劇情事實 ＞ 本卡文風基準／角色基因 ＞ 已確診 P0 病灶 ＞ 一般習慣提醒`；同時由 `deriveStyleDnaOverrides` 依文風基準自動放寬 `dashLimit` 或豁免 `telegraph_short_paras`，避免主模型學了原作風格後又在本地／Tier 2 被誤判抹平。
+- **場景感知寫作範例輪轉 (`classifyAnchorScene` / `rotateSampleAnchors`)**
+  - 一鍵萃取自動幫每段範例標註輕量場景標籤（`[對白交鋒]`、`[動作緊張]`、`[心理張力]`、`[日常過場]`）；生成前 `turnSection` 依上一輪劇情場景（無損純本地辨識）優先抽取最貼近當下氛圍的 2 段範例注入，取代單純依回合數取餘的盲抽。
 
 - **Tier 2 批次合併重寫 ＋ 單段兜底 (`tier2BatchMode`: `'batch'` 預設 / `'single'`)**
   - 多段候選自動按每 **5 段**合併為單一批次請求，顯著壓低重複的 System Prompt 與上下文 Token 消耗；內建 `[N]` 與 `<<<SEG_N>>>` 雙格式安全邊界與純函數解析器 `parseBatchOutput`。
@@ -146,7 +152,7 @@ node --test tests/*.test.mjs
 
 本引擎在設計與規則演進過程中深度參考並借鑑了以下開源專案與無微調生成研究：
 
-- [lieflat-less-ai-tone](https://github.com/larashero3-dotcom/lieflat-less-ai-tone)：句法翻譯腔、相鄰句結構同構、MTLD／同義換詞與 X 級反誤傷基準。
+- [lieflat-less-ai-tone](https://github.com/larashero3-dotcom/lieflat-less-ai-tone) 與 [writing-dna-skill](https://github.com/larashero3-dotcom/writing-dna-skill)：句法翻譯腔、相鄰句結構同構、MTLD／同義換詞與 X 級反誤傷基準，以及 **L1 句長與標點量化指紋、文風 DNA 優先於去 AI 味規則的衝突仲裁、場景導向語料挑選** 等方法論借鑑。
 - [huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)：白名單等長掩碼、寫作範例輪轉、無詞表動態意象思路、碎句稀釋、多角色語言基因卡與形近字／言說語病規則。
 - [aeopress/novel-skills](https://github.com/aeopress/novel-skills)：零依賴中文 `ai_tells`、列表同開頭、稱謂變體一致性與段落 CV／六感平衡指標。
 - [wei125775-lab/deai](https://github.com/wei125775-lab/deai)：網文模板詞庫、「替換不複用」「動作後少解釋一句」、C 級反誤傷與最大刪減比例護欄。
