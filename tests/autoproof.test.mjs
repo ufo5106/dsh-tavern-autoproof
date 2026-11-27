@@ -959,6 +959,7 @@ test('v1.37 深化借鑑：同構句拍、翻譯腔與廢話無損預清理、AI
           script: 'trad',
           preCleanFillers: true,
           modelFamilyAdapt: 'auto',
+          tier2BatchMode: 'single',
           characterVoices: '陳默 | 語氣=少話冷靜',
         }
       },
@@ -986,7 +987,7 @@ test('v1.37 深化借鑑：同構句拍、翻譯腔與廢話無損預清理、AI
   const rpt137 = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-v137', turn: 9 })
   assert.equal(rpt137.turn, 9)
   assert.equal(rpt137.features.modelFamily, 'deepseek')
-  assert.equal(rpt137.features.dashLimitApplied, 1.5)
+  assert.equal(rpt137.features.dashLimitApplied, 2)
   assert.equal(rpt137.features.preCleanedCount, 1)
   assert.ok(rpt137.features.concentration && typeof rpt137.features.concentration.score === 'number')
   assert.ok(!writtenText.includes('不可否認的是，'))
@@ -1076,4 +1077,218 @@ test('冷卻池專名防誤抓：角色卡／世界書與遊戲帳號／戰隊�
   assert.ok(!sec.includes('木恩'))
   assert.ok(!sec.includes('微草'))
   assert.ok(!sec.includes('獨活'))
+})
+
+test('v1.38 核心升級：修辭骨架冷卻衰減、純文字行為自適應、元資料防護、Tier 2 批次＋單段兜底＋空轉過濾與一鍵還原', async () => {
+  const {
+    isRhetoricalSkeleton,
+    extractRhetoricalSkeletons,
+    computeDecayedCooldown,
+    detectModelFamily,
+    classifyTurnOpening,
+    analyzeTurnBehavioralMetrics,
+    deriveBehavioralAdaptation,
+    scanAndCleanMetaLeakage,
+    parseBatchOutput,
+    buildSegmentDiffs,
+  } = __test
+
+  // 1. 修辭骨架冷卻 ＋ 指數衰減 ＋ 舊「地圖」雜訊剔除
+  assert.equal(isRhetoricalSkeleton('地圖'), false)
+  assert.equal(isRhetoricalSkeleton('隊友'), false)
+  assert.equal(isRhetoricalSkeleton('一抹冷笑'), true)
+  assert.equal(isRhetoricalSkeleton('眼底閃過'), true)
+
+  const skelText = [
+    '他看著地圖，指尖微微一顫，眼底閃過一絲寒意。',
+    '隊友打開地圖確認路線，他的指尖微微一顫，窗外月光灑落桌面。',
+    '地圖邊角捲了起來，兩人眼底閃過同樣的遲疑，一絲寒意順著門縫滲進來。',
+  ].join('\n')
+  const skels = extractRhetoricalSkeletons(skelText, { minCount: 2 })
+  assert.equal(skels['地圖'], undefined)
+  assert.equal(skels['隊友'], undefined)
+  assert.ok(Object.keys(skels).length >= 1)
+
+  const cdDecayed = computeDecayedCooldown([
+    { turn: 1, microActions: {}, dynamicImages: { 地圖: 9, 眼底閃過: 3 } },
+    { turn: 2, microActions: {}, skeletons: { 眼底閃過: 3, 嘴角勾起: 1 } },
+    { turn: 3, microActions: {}, skeletons: { 眼底閃過: 2 } },
+  ])
+  assert.ok(!cdDecayed.includes('地圖'))
+  assert.ok(cdDecayed.includes('眼底閃過'))
+
+  // 2. 模型名稱診斷識別擴充（qwen / grok / glm / minimax）
+  assert.equal(detectModelFamily('qwen3.8-flash').family, 'qwen')
+  assert.equal(detectModelFamily('grok-3-beta').family, 'grok')
+  assert.equal(detectModelFamily('glm-4-plus').family, 'glm')
+  assert.equal(detectModelFamily('minimax-text-01').family, 'minimax')
+
+  // 3. 純文字行為自適應 ＋ 連 3 輪相同開場偵測
+  assert.equal(classifyTurnOpening('夜色壓得很低，窗外飄著細雨。'), 'weather_time')
+  assert.equal(classifyTurnOpening('「別等了。」她把鑰匙丟在桌上。'), 'dialogue')
+  const bSample = analyzeTurnBehavioralMetrics(
+    '夜色正濃——他走進房間——空氣有點悶。\n桌子靠著牆。\n窗簾拉了一半。',
+    { embodied: { hits: 5 } },
+    { chars: 200, dashOutside: 6, paragraphs: 3 }
+  )
+  assert.ok(bSample.dashPer1k > 5)
+  assert.equal(bSample.openingKind, 'weather_time')
+
+  const adaptRes = deriveBehavioralAdaptation([
+    { turn: 1, behavior: { ...bSample, directSpeechRatio: 0.05, frontLoadChars: 420 } },
+    { turn: 2, behavior: { ...bSample, directSpeechRatio: 0.08, frontLoadChars: 390 } },
+    { turn: 3, behavior: { ...bSample, directSpeechRatio: 0.04, frontLoadChars: 410 } },
+  ])
+  assert.equal(adaptRes.active, true)
+  assert.equal(adaptRes.dashLimit, 1.5)
+  assert.equal(adaptRes.openingMonotony, 'weather_time')
+  assert.ok(adaptRes.hints.some((h) => h.includes('開場') || h.includes('破折號') || h.includes('對白')))
+
+  // 4. 後設／系統元資料洩漏清理與截斷告警（白名單與對白內豁免）
+  const rawMeta = [
+    '「這上面寫著（未完待續），別管它。」他把紙揉成一團。',
+    '他推開門走進走廊。',
+    '（字數統計：1,280字）',
+    '【本節重點】',
+    '[OOC: 接下來進入戰鬥]',
+    '雨水打在屋簷上，啪嗒作響—',
+  ].join('\n')
+  const metaRes = scanAndCleanMetaLeakage(rawMeta, { clean: true })
+  assert.equal(metaRes.removedCount, 3)
+  assert.ok(metaRes.text.includes('「這上面寫著（未完待續），別管它。」'))
+  assert.ok(!metaRes.text.includes('字數統計'))
+  assert.ok(!metaRes.text.includes('【本節重點】'))
+  assert.ok(!metaRes.text.includes('[OOC:'))
+  assert.equal(metaRes.truncatedEnding, true)
+
+  // 5. batch 解析與 segment diff
+  const parsedMap = parseBatchOutput('[1]\n這是校對後保持長度的第一段正文甲。\n\n[2]\n這是校對後保持長度的第二段正文乙。', [
+    { num: 1, content: '這是一段超過十個漢字的原始段落甲。' },
+    { num: 2, content: '這是一段超過十個漢字的原始段落乙。' },
+  ])
+  assert.equal(parsedMap.size, 2)
+  assert.equal(parsedMap.get(1), '這是校對後保持長度的第一段正文甲。')
+  const diffsPreview = buildSegmentDiffs('甲\n多餘一行\n乙', '甲改\n乙')
+  assert.equal(diffsPreview.length, 2)
+
+  // 6. E2E Mock：空轉低訊號過濾 -> Tier 2 批次＋單段兜底 -> Diff 與一鍵還原鎖定
+  const handlers = new Map()
+  let latestText = ''
+  let curVer = 'v1'
+  let curTurn = 1
+  let llmCalls = 0
+  let storedTurnData = new Map()
+
+  const mockCtxV138 = {
+    _disableLog: true,
+    llm: {
+      async prepareCall() {
+        return {
+          config: {},
+          async *stream(req) {
+            llmCalls += 1
+            const msg0 = req?.messages?.[0]?.content
+            const userMsg = Array.isArray(msg0)
+              ? msg0.map((p) => p?.text || '').join('')
+              : String(msg0 || '')
+            if (userMsg.includes('【批次局部校對')) {
+              // Batch 模式回傳第 1 段，故意漏掉第 2 段以驗證單段兜底
+              yield {
+                type: 'text-delta',
+                text: '[1]\n屋裡還亮著白燈。這是無可奈何的選擇，他沉默著低頭看著文件。',
+              }
+            } else {
+              yield {
+                type: 'text-delta',
+                text: '她打開木匣子看著舊鑰匙，沉思了幾秒沒有再多說，神情看似平靜卻像早有盤算。',
+              }
+            }
+          },
+        }
+      },
+    },
+    tavern: {
+      apiVersion: 8,
+      gameSettings() {},
+      turnSection() {},
+      onTurnSettled() {},
+      onTimelineChanged() {},
+      onGameRemoved() {},
+      handle(name, fn) { handlers.set(name, fn) },
+      async backgroundModel() { return { provider: 'mock', model: 'qwen3.8-flash' } },
+      async getGameSettings() {
+        return {
+          enabled: true,
+          tier2: true,
+          mode: 'standard',
+          script: 'trad',
+          tier2BatchMode: 'batch',
+          metaLeakGuard: 'clean',
+          preCleanFillers: true,
+          targetedFeedback: true,
+        }
+      },
+      async getCard() { return { name: '林硯', description: '現代日常故事。' } },
+      async getTurnState() { return { turn: curTurn } },
+      async getTurn({ turn }) {
+        return { turn, textVersion: curVer, rawText: latestText }
+      },
+      async readTurnData({ gameId, turn }) {
+        return storedTurnData.get(`${gameId}:${turn}`) || null
+      },
+      async saveTurnData({ gameId, turn, data }) {
+        storedTurnData.set(`${gameId}:${turn}`, { data })
+      },
+      async editTurn({ text }) {
+        latestText = text
+        curVer = 'v_' + Math.random().toString(36).slice(2, 6)
+        return { textVersion: curVer, text }
+      },
+    },
+  }
+  apply(mockCtxV138)
+
+  // 6a. 低訊號段落僅觸發弱警示且無人為 P0／精準定位，應略過 Tier 2（0 LLM 呼叫）
+  curTurn = 1
+  latestText = '午後三點的咖啡廳有點安靜，街邊電車叮鈴噹啷開過，桌上拿鐵表面的奶泡緩緩塌了一小角，似乎帶著一點淡淡的焦糖味兒。'
+  const rptLow = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-v138', turn: 1 })
+  assert.equal(llmCalls, 0)
+  assert.equal(rptLow.tier2.ran, false)
+
+  // 6b. 實質 P0 段落：驗證 Meta-leak 清理 + Batch(1次) + 漏段 Fallback(1段) + Diff + Undo + 鎖定
+  curTurn = 2
+  curVer = 'v10'
+  const origTurn2 = [
+    '不可否認的是，屋裡還亮著白燈。這不是他的錯，而是無可奈何的選擇，他低頭看著文件。',
+    '她打開木匣子看著舊鑰匙，這不是挑釁，而是無聲的回應，神情看似平靜卻像什麼都明白。',
+    '（未完待續）',
+  ].join('\n')
+  latestText = origTurn2
+
+  const rptBatch = await handlers.get('dsh-tavern-autoproof/proof')({ gameId: 'g-v138', turn: 2 })
+  assert.equal(rptBatch.features.metaLeakRemovedCount, 1)
+  assert.ok(!latestText.includes('（未完待續）'))
+  assert.equal(rptBatch.tier2.batchCalls, 1)
+  assert.equal(rptBatch.tier2.fallbackSingles, 1)
+  assert.ok(Array.isArray(rptBatch.diffs) && rptBatch.diffs.length >= 2)
+  assert.equal(rptBatch.canUndo, true)
+  assert.equal(rptBatch.reverted, false)
+
+  // 執行一鍵還原原文
+  const undoRes = await handlers.get('dsh-tavern-autoproof/undo')({ gameId: 'g-v138', turn: 2 })
+  assert.equal(undoRes.ok, true)
+  assert.equal(latestText, origTurn2)
+  assert.equal(undoRes.report.reverted, true)
+  assert.equal(undoRes.report.canUndo, false)
+
+  // 還原後重啟模擬：readTurnData 應維持鎖定，不再自動改寫
+  const callsBeforeTick = llmCalls
+  const tickAfterUndo = await handlers.get('dsh-tavern-autoproof/tick')({
+    gameId: 'g-v138',
+    turn: 2,
+    textVersion: 'v_new_external',
+  })
+  assert.equal(llmCalls, callsBeforeTick)
+  assert.equal(latestText, origTurn2)
+  assert.ok(tickAfterUndo.ok)
 })

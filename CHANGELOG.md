@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.38.0
+
+### 品牌標題升級
+- 正式升級展示標題為 **「澄文-AutoProof-自適應敘事精修與去AI味引擎」**（底層 `package.json` ID `dsh-tavern-autoproof` 與資料通道完全維持不變，確保老用戶覆蓋更新零設定與零歷史遺失）。
+
+### 核心功能升級與效能革新
+- **Tier 2 批次合併重寫 ＋ 單段兜底 (`tier2BatchMode`)**：
+  - 預設啟用 `batch` 模式（可切回 `single`）：每 5 段合併為一組請求重寫，搭配 `[N]` / `<<<SEG_N>>>` 雙格式標記解析 (`parseBatchOutput`)；凡解析缺段、守門退回或命中 `targetSnippets` 照抄時，自動落入 `fallbackQueue` 改走單段重寫 (`runSingleSegment`)。
+- **低訊號空轉過濾 (`skippedLowSignal`)**：
+  - 預篩無簡繁修改需求、`locatedSpans.length === 0`、無 `P0_PRIORITY_KEYS` 命中且本輪 AI 味綜合濃度 `< 0.12` 之段落，直接免送線上 Tier 2（報告標記 `low-signal-filtered`）。
+- **報告內段落級 Diff 檢視 ＋ 一鍵還原原文鎖定 (`dsh-tavern-autoproof/undo`)**：
+  - `proofTurn` 計算改前／改後段落差異 (`buildSegmentDiffs`) 並保存 `snapshot`（`originalRaw`、`diffs`、`reverted`）；報告介面 (`ReportOverlay`) 支援摺疊展開 Diff 明細，並對超過 `15` 種或 `25` 次的 Tier 1 字級修復自動摺疊。
+  - 新增報告底部 **「↩ 一鍵還原原文」** 按鈕，經 `editTurn` 退回改前全文並寫入 `revertedTurns` 鎖定，非手動「重新校對本輪」不重複自動覆寫。
+- **修辭骨架分群冷卻 ＋ 指數衰減 (`0.72^age`)**：
+  - 以 `extractRhetoricalSkeletons` 與 `computeDecayedCooldown` 取代字面 N-gram 動態意象，專抓比喻架、量詞感官情緒架、微表情與光影動詞架，杜絕將一般名詞（如「地圖」「隊友」）誤納冷卻池並自動清洗舊版雜訊緩存。
+- **純文字近 3 輪行為自適應（取代依後台模型名猜測前台）**：
+  - 新增 `classifyTurnOpening`、`analyzeTurnBehavioralMetrics`、`deriveBehavioralAdaptation`，依最近 2～3 輪實測的 `dashPer1k`、`frontLoadChars`、`directSpeechRatio`、`embodiedHits` 與連 3 輪開場同質度 (`openingMonotony`) 動態調節 `dashLimit` 與 `turnSection` 提醒，將 `modelFamilyAdapt` 預設由 `'auto'` 升級為 `'behavioral'`；同步擴充 `detectModelFamily` 診斷支援 `qwen` / `grok` / `glm` / `minimax` / `doubao`。
+- **網文後設／系統元資料清理與截斷告警 (`metaLeakGuard` / `scanAndCleanMetaLeakage`)**：
+  - 純本地 0-Token 移除引號外與白名單外之獨立出戲行（如 `（未完待續）`、`【本節重點】`、`（字數統計：…）`、`[OOC: ...]`），並對缺句末標點或引號未閉合發出 `truncatedEnding` 告警。
+- **全皮膚自適應高定介面升級（相容 `dsh-tavern-skin-engine` 與深淺皮膚）**：
+  - 透過 `--dsh-tavern-*` → `--dsw-alias-*` → `--gal-ui-*` 變數鏈即時連動酒館主題包底色、強調色、文字、字體與圓角（含 `body[data-ds-dark-theme]` 深淺高對比切換），並將設定與報告頁首換為極簡盾牌打勾 SVG 徽章。
+  - 報告頂部新增 **環形 SVG AI 味綜合濃度儀表**，搭配滑動開關 `.ap-switch` 與微抬升流光按鈕 `.ap-btn`；「重新校對」執行視窗升級為漸層彗星弧線連續 360° 旋轉動效（每秒計時不重設旋轉進度）。
+
 ## 1.37.0
 
 ### 新增功能（多專案深度借鑑與本地 0-Token 升級）

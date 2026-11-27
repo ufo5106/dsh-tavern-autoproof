@@ -64,6 +64,13 @@ import {
   calcAiConcentration,
   detectModelFamily,
   checkAddressConsistency,
+  isRhetoricalSkeleton,
+  extractRhetoricalSkeletons,
+  computeDecayedCooldown,
+  classifyTurnOpening,
+  analyzeTurnBehavioralMetrics,
+  deriveBehavioralAdaptation,
+  scanAndCleanMetaLeakage,
 } from './lib/local-rules.mjs'
 
 export const name = 'dsh-tavern-autoproof'
@@ -1342,6 +1349,95 @@ export function parseModelOutput(output, targets) {
   return applied > 0
 }
 
+// v1.38：純函數批次解析（支援 [N] 與 <<<SEG_N>>> 雙標記，供 bestOfN 與單段 fallback）
+export function parseBatchOutput(output, targets) {
+  const result = new Map()
+  const clean = String(output ?? '').trim()
+  if (!clean || !Array.isArray(targets) || !targets.length) return result
+
+  if (targets.length === 1) {
+    const trailing = targets[0].content.match(/\n+$/)?.[0] || ''
+    const body = clean
+      .replace(/^<<<\s*SEG_\s*1\s*>>>\s*/i, '')
+      .replace(/^【?第?\s*1\s*段】?[:：]?\s*/i, '')
+      .trim()
+    if (body && hanzi(body) >= Math.floor(hanzi(targets[0].content) * 0.45)) {
+      result.set(targets[0].num, body + trailing)
+    }
+    return result
+  }
+
+  const numsAlt = targets.map(t => Number(t.num)).filter(Boolean).join('|')
+  for (const seg of targets) {
+    const n = seg.num
+    const startRe = new RegExp(`(?:^|\\n)\\s*(?:<<<\\s*SEG_\\s*${n}\\s*>>>|\\[\\s*${n}\\s*\\]|【第\\s*${n}\\s*段】|SEG_${n}:)\\s*`, 'i')
+    const startMatch = startRe.exec(clean)
+    if (!startMatch) continue
+    const rest = clean.slice(startMatch.index + startMatch[0].length)
+    const nextRe = new RegExp(`\\n\\s*(?:<<<\\s*SEG_\\s*(?:${numsAlt})\\s*>>>|\\[\\s*(?:${numsAlt})\\s*\\]|【第\\s*(?:${numsAlt})\\s*段】|SEG_(?:${numsAlt}):)\\s*`, 'i')
+    const endMatch = nextRe.exec(rest)
+    const body = (endMatch ? rest.slice(0, endMatch.index) : rest).trim()
+    const trailing = seg.content.match(/\n+$/)?.[0] || ''
+    if (body && hanzi(body) >= Math.floor(hanzi(seg.content) * 0.45)) {
+      result.set(n, body + trailing)
+    }
+  }
+  return result
+}
+
+// v1.38：計算 Tier 1 ＋ Tier 2 寫回後的段落級 Diff（最多回傳 24 條變更段）
+export function buildSegmentDiffs(beforeRaw, afterRaw, reasonsMap = null) {
+  const bRaw = String(beforeRaw ?? '')
+  const aRaw = String(afterRaw ?? '')
+  if (bRaw === aRaw) return []
+  const bLines = bRaw.split('\n')
+  const aLines = aRaw.split('\n')
+  const diffs = []
+
+  if (bLines.length === aLines.length) {
+    for (let i = 0; i < bLines.length; i++) {
+      if (bLines[i] === aLines[i]) continue
+      const reasons = reasonsMap instanceof Map ? (reasonsMap.get(i) || []) : []
+      diffs.push({
+        index: i,
+        before: bLines[i],
+        after: aLines[i],
+        reasons: [...new Set(reasons)],
+      })
+      if (diffs.length >= 24) break
+    }
+    return diffs
+  }
+
+  // 當清理孤立元資料洩漏行導致總行數減少時，前後綴對齊剩餘段落
+  let head = 0
+  while (head < bLines.length && head < aLines.length && bLines[head] === aLines[head]) head++
+  let bTail = bLines.length - 1
+  let aTail = aLines.length - 1
+  while (bTail >= head && aTail >= head && bLines[bTail] === aLines[aTail]) {
+    bTail--
+    aTail--
+  }
+  const bMid = bLines.slice(head, bTail + 1)
+  const aMid = aLines.slice(head, aTail + 1)
+  const maxMid = Math.max(bMid.length, aMid.length)
+  for (let k = 0; k < maxMid; k++) {
+    const before = k < bMid.length ? bMid[k] : ''
+    const after = k < aMid.length ? aMid[k] : ''
+    if (before === after) continue
+    const segIdx = head + k
+    const reasons = reasonsMap instanceof Map ? (reasonsMap.get(segIdx) || []) : []
+    diffs.push({
+      index: segIdx,
+      before,
+      after,
+      reasons: [...new Set(reasons)],
+    })
+    if (diffs.length >= 24) break
+  }
+  return diffs
+}
+
 // ---- 本地確定性最小修正器（供回歸測試、預覽工作台及無後台模型時的零 Token 局部精修） ----
 
 export function surgicalPolishParagraph(line, mode = 'standard') {
@@ -1561,12 +1657,12 @@ export function analyze(text, customLimits = {}) {
 
 // ---- 模型局部校對系統提示詞（從「禁止句型」升級為「修正敘事習慣、保留角色靈魂」） ----
 
-export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aestheticMode = 'deep', modelFamily = '') {
+export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aestheticMode = 'deep', modelFamily = '', isBatch = false) {
   const scriptRule = toScript === 'simp'
     ? '5. 語文純淨度：統一使用簡體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
     : '5. 語文純淨度：統一使用繁體中文，消除夾雜在中文句子裡的英文單詞（如 pull）與明顯漏字。'
   const parts = [
-    '你是中文小說的局部文體編輯（AutoProof v1.37）。你的職責是修正被指出的「機械化敘事習慣與 AI 腔對白」，而不是替作者重寫故事。',
+    '你是中文小說的局部文體編輯（澄文 · AutoProof v1.38）。你的職責是修正被指出的「機械化敘事習慣與 AI 腔對白」，而不是替作者重寫故事。',
     '請判斷候選是否構成機械模板：未命中的正常語句盡量保留原樣；但凡【精準定位命中】明確點出 `[對白AI腔]`、隱性對仗金句（「不X了。我Y。」「V的是A，V的是B」「沒錯，錯在…」）、機械數字遞進或無意義複位動作，屬於已確診病灶，務必實質改寫成真人隨口說的話，不得原句照抄。',
     '',
     '【最高優先級：最小改動與有效去 AI 味邊界】',
@@ -1605,8 +1701,12 @@ export function buildRewriteSystem(toScript = 'trad', styleGuide = '', aesthetic
   parts.push(
     '',
     '【輸出契約】',
-    '- 只輸出校對後的本段正文，不要編號、標題、解釋、Markdown 或程式碼圍欄。',
-    '- 保留本段原有段落數與換行；不要輸出 HTML。',
+    isBatch
+      ? '- 嚴格保留每個輸入段落開頭的編號標記（如 [1] 或 <<<SEG_1>>>），依序逐段輸出校對後正文，不得合併、拆分或遺漏任何一段。'
+      : '- 只輸出校對後的本段正文，不要編號、標題、解釋、Markdown 或程式碼圍欄。',
+    isBatch
+      ? '- 若某一段判斷候選不成立，仍須保留該段開頭標記並逐字返回原段。'
+      : '- 保留本段原有段落數與換行；不要輸出 HTML。',
     '- 若判斷候選不成立，逐字返回原文。',
   )
   return parts.join('\n')
@@ -1680,6 +1780,7 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
     voiceBlock = '',
     verbalizedSampling = false,
     modelPrior = '',
+    behaviorHints = [],
   } = extra
   const hints = []
   if (includeStyleHints && (recurringKeys.length || mode !== 'conservative')) {
@@ -1730,6 +1831,11 @@ export function buildTurnConstraintHint(recurringKeys = [], mode = 'standard', e
   }
   if (modelPrior) {
     hints.push(`【模型習癖平衡】${modelPrior}`)
+  }
+  if (Array.isArray(behaviorHints) && behaviorHints.length > 0) {
+    for (const bh of behaviorHints) {
+      if (bh) hints.push(`【行為自適應平衡】${bh}`)
+    }
   }
   if (utteranceGateActive) {
     hints.push('【知而不言邊界】心裡知道的設定 ≠ 嘴上要解釋的話。熟人或同陣營角色對話時，禁止在台詞裡複誦彼此早已知情的公開履歷、歷史沿革或世界觀百科，只說當下互動所需的口語。')
@@ -1883,6 +1989,8 @@ export function apply(ctx) {
   const styleHistory = new Map() // gameId -> Array<{ turn, keys }>
   const settingsByGame = new Map() // gameId -> granular settings override
   const lastGenHooks = new Map() // gameId -> last pre-generation turnSection snapshot
+  const snapshots = new Map()    // `${gameId}:${turn}` -> { originalRaw, diffs, reverted }
+  const revertedTurns = new Set() // `${gameId}:${turn}` -> locked against automatic re-edit after undo
   let globalSettings = null
   let pluginDataLoaded = false
 
@@ -1999,8 +2107,10 @@ export function apply(ctx) {
       turn,
       keys: [...new Set(keys)],
       microActions: extra.microActions || {},
+      skeletons: extra.skeletons || {},
       dynamicImages: extra.dynamicImages || {},
       structuralFlags: [...new Set(extra.structuralFlags || [])],
+      behavior: extra.behavior || null,
     }
     const existing = history.findIndex(x => x.turn === turn)
     if (existing >= 0) history[existing] = entry
@@ -2008,35 +2118,27 @@ export function apply(ctx) {
     history.sort((a, b) => Number(a.turn) - Number(b.turn))
     const maxLen = Math.max(4, Math.min(12, Number(windowSize) || 8))
     while (history.length > maxLen) history.shift()
+
+    // 清理舊版與專名混入的冷卻記錄，只保留修辭骨架與微動作
+    const excludeTerms = Array.isArray(extra.excludeTerms) ? extra.excludeTerms : []
+    for (const h of history) {
+      if (h.dynamicImages && typeof h.dynamicImages === 'object') {
+        for (const w of Object.keys(h.dynamicImages)) {
+          if (!isRhetoricalSkeleton(w) || isCooldownExcludedTerm(w, excludeTerms)) {
+            delete h.dynamicImages[w]
+          }
+        }
+      }
+      if (h.skeletons && typeof h.skeletons === 'object') {
+        for (const w of Object.keys(h.skeletons)) {
+          if (isCooldownExcludedTerm(w, excludeTerms)) delete h.skeletons[w]
+        }
+      }
+    }
     persistStyleHistory()
 
     const recurringKeys = entry.keys.filter(key => history.filter(x => (x.keys || []).includes(key)).length >= 3)
-
-    // 冷卻池：合併高頻微動作詞表 ＋ 無詞表動態抽取意象（過濾專名／角色／戰隊／帳號詞彙）
-    const excludeTerms = Array.isArray(extra.excludeTerms) ? extra.excludeTerms : []
-    const phraseTurns = new Map()
-    const phraseTotals = new Map()
-    const collectMap = (obj, filterExcluded = false) => {
-      if (!obj || typeof obj !== 'object') return
-      for (const [w, cnt] of Object.entries(obj)) {
-        if (filterExcluded && isCooldownExcludedTerm(w, excludeTerms)) {
-          delete obj[w]
-          continue
-        }
-        phraseTurns.set(w, (phraseTurns.get(w) || 0) + 1)
-        phraseTotals.set(w, (phraseTotals.get(w) || 0) + (Number(cnt) || 0))
-      }
-    }
-    for (const h of history) {
-      collectMap(h.microActions, false)
-      collectMap(h.dynamicImages, true)
-    }
-    const cooldownWords = Array.from(phraseTotals.entries())
-      .filter(([w, total]) => (phraseTurns.get(w) || 0) >= 3 || ((phraseTurns.get(w) || 0) >= 2 && total >= 3))
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([w]) => w)
-
+    const cooldownWords = computeDecayedCooldown(history, { decay: 0.72, excludeTerms, limit: 5 })
     const structuralRecurring = pickRecurringStructuralFlags(history)
 
     return { recurringKeys, cooldownWords, structuralRecurring }
@@ -2052,7 +2154,7 @@ export function apply(ctx) {
 
   // 宿主 gameSettings 上限為 1–20 項；此處保留核心 12 項，完整分頁設定與 ? 說明請使用輸入列「校對設定」面板
   ctx.tavern.gameSettings({
-    title: '自動校對 v1.37',
+    title: '澄文 · AutoProof v1.38',
     fields: [
       { key: 'enabled', type: 'boolean', label: '自動校對', description: '每輪生成後檢查可見正文；修正常見簡繁混用、英文殘留並對高可信候選做局部校對。完整分項設定與 ? 說明請點輸入列「校對設定」。', default: true },
       {
@@ -2163,25 +2265,7 @@ export function apply(ctx) {
           if (cfg.cooldownPool === 'inject' && history.length >= 2) {
             const cardSpecHook = await getCardSpec(gameId).catch(() => null)
             const excludeHook = collectExcludedCooldownTerms(cfg, cardSpecHook)
-            const phraseTurns = new Map()
-            const phraseTotals = new Map()
-            const collect = (obj, filterExcluded = false) => {
-              if (!obj || typeof obj !== 'object') return
-              for (const [w, cnt] of Object.entries(obj)) {
-                if (filterExcluded && isCooldownExcludedTerm(w, excludeHook)) continue
-                phraseTurns.set(w, (phraseTurns.get(w) || 0) + 1)
-                phraseTotals.set(w, (phraseTotals.get(w) || 0) + (Number(cnt) || 0))
-              }
-            }
-            for (const h of history) {
-              collect(h.microActions, false)
-              collect(h.dynamicImages, true)
-            }
-            cooldownWords = Array.from(phraseTotals.entries())
-              .filter(([w, total]) => (phraseTurns.get(w) || 0) >= 3 || ((phraseTurns.get(w) || 0) >= 2 && total >= 3))
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5)
-              .map(([w]) => w)
+            cooldownWords = computeDecayedCooldown(history, { decay: 0.72, excludeTerms: excludeHook, limit: 5 })
           }
 
           let structuralFlags = []
@@ -2190,10 +2274,13 @@ export function apply(ctx) {
           }
 
           let modelMeta = { family: 'unknown', preGenPrior: '' }
-          if (cfg.modelFamilyAdapt !== 'off' && typeof ctx.tavern.backgroundModel === 'function') {
+          if (typeof ctx.tavern.backgroundModel === 'function') {
             const bgInfo = await ctx.tavern.backgroundModel({ gameId }).catch(() => null)
             modelMeta = detectModelFamily(bgInfo?.model || '')
           }
+          const behaviorAdapt = cfg.modelFamilyAdapt !== 'off'
+            ? deriveBehavioralAdaptation(history)
+            : { active: false, dashLimit: 2.0, hints: [], openingMonotony: '', summary: '' }
 
           const built = buildTurnConstraintHint(recurring, cfg.mode || 'standard', {
             cooldownWords,
@@ -2204,7 +2291,7 @@ export function apply(ctx) {
             sampleAnchors: rotated.selected,
             voiceBlock,
             verbalizedSampling,
-            modelPrior: modelMeta.preGenPrior,
+            behaviorHints: behaviorAdapt.hints,
           })
           if (gameId) {
             lastGenHooks.set(gameId, {
@@ -2216,6 +2303,8 @@ export function apply(ctx) {
               verbalizedSampling,
               utteranceGateActive,
               modelFamily: modelMeta.family,
+              behaviorAdaptActive: behaviorAdapt.active,
+              behaviorAdaptSummary: behaviorAdapt.summary,
               preHintActive: Boolean(built),
               cooldownWords,
               structuralFlags,
@@ -2249,16 +2338,31 @@ export function apply(ctx) {
         }
         if (!currentRaw) return null
 
-        // 防止對已經自動寫回的同一版本重複改寫（含重啟後從 readTurnData 恢復）
+        // 防止對已經自動寫回或手動還原鎖定的同一版本重複改寫（含重啟後從 readTurnData 恢復）
         const gameEdits = editsOf(gameId)
+        if (!force && revertedTurns.has(lockKey)) {
+          return reports.get(lockKey) || null
+        }
+        if (force) revertedTurns.delete(lockKey)
         if (!force && currentVersion && gameEdits.get(turn) === currentVersion) {
           return reports.get(lockKey) || null
         }
-        if (!force && currentVersion && typeof ctx.tavern.readTurnData === 'function') {
+        if (!force && typeof ctx.tavern.readTurnData === 'function') {
           try {
             const saved = await ctx.tavern.readTurnData({ gameId, turn })
+            if (saved?.data?.snapshot) snapshots.set(lockKey, saved.data.snapshot)
             const savedReport = saved?.data?.report
-            if (savedReport && savedReport.textVersion === currentVersion) {
+            if (saved?.data?.snapshot?.reverted || savedReport?.reverted) {
+              revertedTurns.add(lockKey)
+              if (savedReport) {
+                reports.set(lockKey, savedReport)
+                if (currentVersion || savedReport.textVersion) {
+                  gameEdits.set(turn, currentVersion || savedReport.textVersion)
+                }
+              }
+              return savedReport || null
+            }
+            if (currentVersion && savedReport && savedReport.textVersion === currentVersion) {
               reports.set(lockKey, savedReport)
               gameEdits.set(turn, currentVersion)
               return savedReport
@@ -2276,16 +2380,19 @@ export function apply(ctx) {
         const prefBgModel = typeof ctx.tavern.backgroundModel === 'function'
           ? await ctx.tavern.backgroundModel({ gameId }).catch(() => null)
           : null
-        const modelMeta = (cfg.modelFamilyAdapt !== 'off')
-          ? detectModelFamily(prefBgModel?.model || '')
-          : { family: 'unknown', dashStrict: false, dashLimit: 2.0, preGenPrior: '' }
+        const modelMeta = detectModelFamily(prefBgModel?.model || '')
+        const historyBeforeTurn = (styleHistory.get(gameId) || []).filter(h => Number(h.turn) < Number(turn))
+        const behaviorAdapt = (cfg.modelFamilyAdapt !== 'off')
+          ? deriveBehavioralAdaptation(historyBeforeTurn)
+          : { active: false, dashLimit: 2.0, hints: [], openingMonotony: '', summary: '' }
         const effectiveLimits = cardSpec.limits ? { ...cfg, ...cardSpec.limits } : { ...cfg }
-        if (cfg.modelFamilyAdapt !== 'off' && (effectiveLimits.dashLimit == null || effectiveLimits.dashLimit === 2.0)) {
-          effectiveLimits.dashLimit = modelMeta.dashLimit
+        if (effectiveLimits.dashLimit == null) effectiveLimits.dashLimit = 2.0
+        if (cfg.modelFamilyAdapt !== 'off' && behaviorAdapt.active && effectiveLimits.dashLimit === 2.0) {
+          effectiveLimits.dashLimit = behaviorAdapt.dashLimit
         }
         const segs = splitSegments(currentRaw)
 
-        // Tier 1：實體專有名詞鎖 ＋ 字級修復檔位 ＋ 雙向引號規範 ＋ 非對白廢話起手清理（純本地 0 Token）
+        // Tier 1：實體專有名詞鎖 ＋ 字級修復檔位 ＋ 雙向引號規範 ＋ 非對白廢話／元資料洩漏清理（純本地 0 Token）
         const whitelistRules = parseWhitelistLines(cfg.styleWhitelist || '')
         const entityLockMode = cfg.entityLockMode || 'auto_and_custom'
         const customRules = entityLockMode !== 'off' ? parseCustomEntityRules(cfg.customEntityFixes || '') : []
@@ -2296,6 +2403,7 @@ export function apply(ctx) {
         const quoteTarget = cfg.quoteNormalize === 'auto'
           ? (toScript === 'simp' ? 'simp_curly' : 'trad_corner')
           : (cfg.quoteNormalize || 'auto')
+        const metaGuardMode = cfg.metaLeakGuard || 'clean'
         const charFixMap = new Map()
         const entityLockFixMap = new Map()
         let tier1Total = 0
@@ -2303,40 +2411,72 @@ export function apply(ctx) {
         let quoteConverted = 0
         let preCleanedCount = 0
         const preCleanedRemoved = []
+        let metaLeakRemovedCount = 0
+        let metaLeakDetectedCount = 0
+        const metaLeakRemoved = []
         for (const seg of segs) {
           if (seg.type !== 'text') continue
+          seg._origContent = seg.content
+          seg._reasons = []
           if (mergedEntityRules.length > 0) {
             const eRes = applyEntityLocks(seg.content, mergedEntityRules)
-            seg.content = eRes.text
-            entityLockTotal += eRes.total
-            tier1Total += eRes.total
-            for (const f of eRes.fixes) {
-              const prevE = entityLockFixMap.get(f.from)
-              if (prevE) prevE.count += f.count
-              else entityLockFixMap.set(f.from, { ...f })
+            if (eRes.total > 0) {
+              seg.content = eRes.text
+              entityLockTotal += eRes.total
+              tier1Total += eRes.total
+              seg._reasons.push('實體名詞鎖定')
+              for (const f of eRes.fixes) {
+                const prevE = entityLockFixMap.get(f.from)
+                if (prevE) prevE.count += f.count
+                else entityLockFixMap.set(f.from, { ...f })
+              }
             }
           }
           if (charFixMode !== 'off') {
             const res = applyCharFixes(seg.content, { enablePhrases: charFixMode === 'full', toScript })
-            seg.content = res.text
-            tier1Total += res.total
-            for (const f of res.fixes) {
-              const prev = charFixMap.get(f.from)
-              if (prev) prev.count += f.count
-              else charFixMap.set(f.from, { ...f })
+            if (res.total > 0) {
+              seg.content = res.text
+              tier1Total += res.total
+              seg._reasons.push('字級校對')
+              for (const f of res.fixes) {
+                const prev = charFixMap.get(f.from)
+                if (prev) prev.count += f.count
+                else charFixMap.set(f.from, { ...f })
+              }
             }
           }
           if (quoteTarget && quoteTarget !== 'off') {
             const qRes = normalizeQuotes(seg.content, quoteTarget)
-            seg.content = qRes.text
-            quoteConverted += qRes.converted
+            if (qRes.converted > 0) {
+              seg.content = qRes.text
+              quoteConverted += qRes.converted
+              seg._reasons.push('引號規範')
+            }
           }
           if (cfg.preCleanFillers !== false) {
             const pRes = preCleanNarrativeFillers(seg.content, { whitelist: whitelistRules })
             if (pRes.count > 0) {
               seg.content = pRes.text
               preCleanedCount += pRes.count
+              seg._reasons.push('冗言起手清理')
               for (const rm of pRes.removed) if (!preCleanedRemoved.includes(rm)) preCleanedRemoved.push(rm)
+            }
+          }
+          if (metaGuardMode !== 'off') {
+            const mlRes = scanAndCleanMetaLeakage(seg.content, {
+              clean: metaGuardMode !== 'report',
+              whitelist: whitelistRules,
+            })
+            if (mlRes.detectedCount > 0) {
+              metaLeakDetectedCount += mlRes.detectedCount
+              if (metaGuardMode !== 'report' && mlRes.removedCount > 0) {
+                seg.content = mlRes.text
+                metaLeakRemovedCount += mlRes.removedCount
+                seg._reasons.push('元資料洩漏清理')
+                for (const rl of mlRes.removedLines) {
+                  if (!metaLeakRemoved.includes(rl)) metaLeakRemoved.push(rl)
+                }
+              }
             }
           }
         }
@@ -2344,6 +2484,9 @@ export function apply(ctx) {
         const entityLockDetail = Array.from(entityLockFixMap.values())
 
         const visible = segs.filter(s => s.type === 'text').map(s => s.content).join('')
+        const wholeMetaCheck = metaGuardMode !== 'off'
+          ? scanAndCleanMetaLeakage(visible, { clean: false, whitelist: whitelistRules })
+          : { truncatedEnding: false, truncatedSample: '' }
         const wlMask = whitelistRules.length ? maskWhitelistSpans(visible, whitelistRules) : { text: visible, maskedSpans: [], maskedChars: 0 }
         const scanVisible = wlMask.text
 
@@ -2374,8 +2517,8 @@ export function apply(ctx) {
         const microActionData = (cfg.cooldownPool && cfg.cooldownPool !== 'off')
           ? extractTurnMicroActions(scanVisible)
           : { counts: {}, topPhrases: [] }
-        const dynamicImgCounts = (cfg.cooldownPool && cfg.cooldownPool !== 'off')
-          ? extractDynamicImagery(scanVisible, { minCount: 3, excludeTerms: excludedCooldownTerms })
+        const skeletonCounts = (cfg.cooldownPool && cfg.cooldownPool !== 'off')
+          ? extractRhetoricalSkeletons(scanVisible, { minCount: 2, limit: 6, excludeTerms: excludedCooldownTerms })
           : {}
         const narrativeFp = (cfg.narrativeSteering && cfg.narrativeSteering !== 'off')
           ? analyzeTurnNarrativeFingerprint(scanVisible)
@@ -2387,6 +2530,18 @@ export function apply(ctx) {
           violations.push({
             key: 'info_dump_dialogue',
             label: `台詞疑含設定集科普（${infoDumpAudit.count} 處，如「${infoDumpAudit.samples[0] || ''}」）`,
+          })
+        }
+        if (wholeMetaCheck.truncatedEnding) {
+          violations.push({
+            key: 'meta_truncated_ending',
+            label: `疑似輸出截斷或未閉合引號（${wholeMetaCheck.truncatedSample || '末尾異常'}）`,
+          })
+        }
+        if (metaGuardMode === 'report' && metaLeakDetectedCount > 0) {
+          violations.push({
+            key: 'meta_leakage',
+            label: `疑似後設／系統元資料殘留（${metaLeakDetectedCount} 處，未自動刪除）`,
           })
         }
         const speechObjHits = findSpeechObjDefects(scanVisible)
@@ -2419,14 +2574,24 @@ export function apply(ctx) {
           antithesisCount: narrative.antithesisCount || 0,
         })
 
+        const turnBehavior = analyzeTurnBehavioralMetrics(visible, rhythmAudit, metrics)
         const combinedStructFlags = [...(narrativeFp.flags || [])]
         if (infoDumpAudit.count > 0) combinedStructFlags.push('info_dump_dialogue')
         if (rhythmAudit.oneSentenceParas?.triggered) combinedStructFlags.push('telegraph_short_paras')
+        const openingMonotonyNow = deriveBehavioralAdaptation([...historyBeforeTurn.slice(-2), { behavior: turnBehavior }]).openingMonotony
+        if (openingMonotonyNow) {
+          combinedStructFlags.push('opening_monotony')
+          violations.push({
+            key: 'opening_monotony',
+            label: `連續 3 輪相同開場（${openingMonotonyNow === 'weather_time' ? '景物時間起手' : '人物微動作起手'}）`,
+          })
+        }
 
         const historyRes = trackStyleHistory(gameId, turn, rawStyleKeys, windowSize, {
           microActions: microActionData.counts,
-          dynamicImages: dynamicImgCounts,
+          skeletons: skeletonCounts,
           structuralFlags: combinedStructFlags,
+          behavior: turnBehavior,
           excludeTerms: excludedCooldownTerms,
         })
         const recurringStyleKeys = historyRes.recurringKeys
@@ -2490,13 +2655,23 @@ export function apply(ctx) {
             voiceTicsMissing: voiceAudit.ticsMissing,
             whitelistRuleCount: whitelistRules.length,
             whitelistMaskedChars: wlMask.maskedChars,
-            dynamicImagesCount: Object.keys(dynamicImgCounts).length,
+            dynamicImagesCount: Object.keys(skeletonCounts).length,
             speechObjDefectsCount: speechObjHits.length,
             oneSentenceParas: rhythmAudit.oneSentenceParas || null,
             dilution: rhythmAudit.dilution || null,
             concentration,
             modelFamily: modelMeta.family,
             dashLimitApplied: effectiveLimits.dashLimit,
+            behaviorAdaptActive: behaviorAdapt.active,
+            behaviorAdaptSummary: behaviorAdapt.summary,
+            openingKind: turnBehavior.openingKind,
+            openingMonotony: openingMonotonyNow,
+            metaLeakGuardMode: metaGuardMode,
+            metaLeakRemovedCount,
+            metaLeakDetectedCount,
+            metaLeakRemoved,
+            truncatedEnding: Boolean(wholeMetaCheck.truncatedEnding),
+            truncatedSample: wholeMetaCheck.truncatedSample || '',
             preCleanedCount,
             preCleanedRemoved,
             isomorphicPairs: rhythmAudit.isomorphic?.pairCount || 0,
@@ -2525,7 +2700,7 @@ export function apply(ctx) {
             cooldownMode: cfg.cooldownPool || 'inject',
             turnMicroActions: [
               ...Object.entries(microActionData.counts || {}).map(([word, count]) => ({ word, count })),
-              ...Object.entries(dynamicImgCounts || {}).slice(0, 3).map(([word, count]) => ({ word: `${word}(意象)`, count })),
+              ...Object.entries(skeletonCounts || {}).slice(0, 3).map(([word, count]) => ({ word: `${word}(骨架)`, count })),
             ],
             cooldownInjected: cooldownWords,
             narrativeSteeringMode: cfg.narrativeSteering || 'inject',
@@ -2561,6 +2736,10 @@ export function apply(ctx) {
             styleCardUsed: false,
             contrastiveExemplarsUsed: false,
             skipReason: '',
+            batchMode: cfg.tier2BatchMode || 'batch',
+            batchCalls: 0,
+            fallbackSingles: 0,
+            skippedLowSignal: 0,
           },
         }
 
@@ -2607,18 +2786,59 @@ export function apply(ctx) {
             if (polished !== seg.content) seg.rewrite = polished
           }
 
-          const numbered = tier2On ? safeNumbered : []
+          // 低訊號空轉過濾：無 P0 病灶 + 無精準命中 + AI 濃度 < 0.12 且非簡繁修正，直接免送 Tier 2
+          const P0_PRIORITY_KEYS = new Set([
+            'paired_reversal', 'omitted_antithesis', 'flip_inversion', 'negated_opener',
+            'action_inflation', 'action_chain', 'dialogue_ai_tone', 'speech_obj_defect',
+            'syntax_translationese', 'padding_verb_chain',
+          ])
+          const numbered = []
+          if (tier2On) {
+            for (const seg of safeNumbered) {
+              const findings = seg.findings || []
+              const scanSegContent = whitelistRules.length ? maskWhitelistSpans(seg.content, whitelistRules).text : seg.content
+              const locatedSpans = cfg.targetedFeedback !== false
+                ? locateParagraphIssues(scanSegContent, findings, {
+                    protectDialogue: protectMode,
+                    lexiconLevel: cfg.aiLexiconLevel || 'balanced',
+                  })
+                : []
+              const targetSnippets = locatedSpans
+                .map((sp) => sp.replace(/^\[(?:對白AI腔|語病定位|句法譯製腔)\]\s*/, '').trim())
+                .filter((sp) => sp.length >= 3 && !sp.startsWith('['))
+              const exemplars = cfg.contrastiveExemplars !== false
+                ? pickContrastiveExemplars(findings, {
+                    toScript,
+                    maxItems: cfg.aestheticPrompt === 'standard' ? 1 : 2,
+                  })
+                : []
+              seg._locatedSpans = locatedSpans
+              seg._targetSnippets = targetSnippets
+              seg._exemplars = exemplars
+              const hasP0 = findings.some((k) => P0_PRIORITY_KEYS.has(k))
+              if (!scriptViolation && locatedSpans.length === 0 && !hasP0 && concentration.score < 0.12) {
+                report.tier2.skippedLowSignal += 1
+                continue
+              }
+              numbered.push(seg)
+            }
+          }
           if (!tier2On) {
             for (const seg of safeNumbered) {
               const polished = surgicalPolishParagraph(seg.content, mode)
-              if (polished !== seg.content) seg.rewrite = polished
+              if (polished !== seg.content) {
+                seg.rewrite = polished
+                if (Array.isArray(seg._reasons)) seg._reasons.push('本地精修')
+              }
             }
           }
 
           report.tier2.segments = numbered.length
           report.targetSegments = numbered.length
           if (numbered.length === 0) {
-            report.tier2.skipReason = !tier2On ? 'local-only' : 'all-filtered'
+            report.tier2.skipReason = !tier2On
+              ? 'local-only'
+              : (report.tier2.skippedLowSignal > 0 ? 'low-signal-filtered' : 'all-filtered')
           }
 
           if (numbered.length > 0) {
@@ -2634,35 +2854,23 @@ export function apply(ctx) {
                 ? await ctx.tavern.versionSignal({ gameId, turn, textVersion: currentVersion }).catch(() => null)
                 : null
               const mergedStyleGuide = [cardSpec.styleGuide, extraStyleCard].filter(Boolean).join('\n\n')
-              const rewriteSystem = buildRewriteSystem(toScript, mergedStyleGuide, cfg.aestheticPrompt || 'deep', modelMeta.family)
+              const rewriteSystem = buildRewriteSystem(toScript, mergedStyleGuide, cfg.aestheticPrompt || 'deep', modelMeta.family, false)
+              const rewriteSystemBatch = buildRewriteSystem(toScript, mergedStyleGuide, cfg.aestheticPrompt || 'deep', modelMeta.family, true)
               const injectedStockCounts = {}
               report.tier2.styleCardUsed = Boolean(extraStyleCard)
               report.features.styleCardTier2Used = Boolean(extraStyleCard)
               report.tier2.contrastiveExemplarsUsed = cfg.contrastiveExemplars !== false
 
-              // v1.33：精準定位命中片段 + 按需動態正反面極簡對照範例
+              // v1.38：精準定位命中片段 + 按需動態正反面極簡對照範例（複用預篩選緩存）
               const buildPrompt = (seg) => {
                 const findings = seg.findings || []
                 const mustMerge = findings.includes('action_inflation') || findings.includes('action_chain')
-                const scanSegContent = whitelistRules.length ? maskWhitelistSpans(seg.content, whitelistRules).text : seg.content
-                const locatedSpans = cfg.targetedFeedback !== false
-                  ? locateParagraphIssues(scanSegContent, findings, {
-                      protectDialogue: protectMode,
-                      lexiconLevel: cfg.aiLexiconLevel || 'balanced',
-                    })
-                  : []
-                const targetSnippets = locatedSpans
-                  .map((sp) => sp.replace(/^\[(?:對白AI腔|語病定位|句法譯製腔)\]\s*/, '').trim())
-                  .filter((sp) => sp.length >= 3 && !sp.startsWith('['))
+                const locatedSpans = Array.isArray(seg._locatedSpans) ? seg._locatedSpans : []
+                const targetSnippets = Array.isArray(seg._targetSnippets) ? seg._targetSnippets : []
                 if (locatedSpans.length > 0) {
                   report.tier2.targetedSpans = (report.tier2.targetedSpans || 0) + locatedSpans.length
                 }
-                const exemplars = cfg.contrastiveExemplars !== false
-                  ? pickContrastiveExemplars(findings, {
-                      toScript,
-                      maxItems: cfg.aestheticPrompt === 'standard' ? 1 : 2,
-                    })
-                  : []
+                const exemplars = Array.isArray(seg._exemplars) ? seg._exemplars : []
                 const hasDialogueText = /[「『“"][^「」『』“”"]+[」』”"]/.test(seg.content)
                 const dialoguePolishNote = (hasDialogueText && protectMode !== 'strict')
                   ? '【對白口癖與去 AI 味邊界】保留說話者原有稱呼、語氣詞與性格口癖；僅針對台詞裡的翻譯腔（「別無選擇」「你必須明白」等）、隱性對仗金句（「不X了。我Y。」「V的是A。V的是B。」）、設定科普、機械排比與三明治插入動作潤飾成真人自然口語。'
@@ -2694,9 +2902,13 @@ export function apply(ctx) {
               report.tier2.route = route
               report.tier2.bestOfN = bestOfNMode
               report.tier2.routeFallbacks = 0
-              const toolSystem = rewriteSystem + '\n\n【輸出方式】必須調用 submit_proofread，把校對後的完整段落放進 content；工具調用以外不要輸出任何文字。'
+              const toolSuffix = '\n\n【輸出方式】必須調用 submit_proofread，把校對後的完整內容放進 content；工具調用以外不要輸出任何文字。'
+              const toolSystem = rewriteSystem + toolSuffix
+              const toolSystemBatch = rewriteSystemBatch + toolSuffix
 
-              const callOnce = async (segPrompt, temperature) => {
+              const callOnce = async (segPrompt, temperature, isBatch = false) => {
+                const sysText = isBatch ? rewriteSystemBatch : rewriteSystem
+                const sysTool = isBatch ? toolSystemBatch : toolSystem
                 const baseCall = {
                   llm,
                   provider: bgModel.provider,
@@ -2708,14 +2920,14 @@ export function apply(ctx) {
                   timeoutMs: 120000,
                 }
                 if (route === 'text') {
-                  return await callHostModel({ ...baseCall, system: rewriteSystem, user: segPrompt })
+                  return await callHostModel({ ...baseCall, system: sysText, user: segPrompt })
                 }
                 try {
-                  return await callHostModel({ ...baseCall, system: toolSystem, user: segPrompt, asTool: true })
+                  return await callHostModel({ ...baseCall, system: sysTool, user: segPrompt, asTool: true })
                 } catch (toolErr) {
                   if (route !== 'tool_then_text') throw toolErr
                   report.tier2.routeFallbacks += 1
-                  return await callHostModel({ ...baseCall, system: rewriteSystem, user: segPrompt })
+                  return await callHostModel({ ...baseCall, system: sysText, user: segPrompt })
                 }
               }
 
@@ -2800,24 +3012,31 @@ export function apply(ctx) {
               let changed = 0
               let unchanged = 0
               const STOCK_CHECK_PHRASES = ['垂下眼', '扯了扯嘴角', '了一下', '轉開視線', '转开视线', '抿了抿唇', '低笑一聲', '低笑一声']
-              await poolMap(numbered, 3, async (seg) => {
+              const batchMode = cfg.tier2BatchMode || 'batch'
+
+              const recordSegmentSuccess = (seg, text, sourceLabel) => {
+                const origTrim = seg.content.trim()
+                if (text !== origTrim) {
+                  const trailing = seg.content.match(/\n+$/)?.[0] || ''
+                  seg.rewrite = text + trailing
+                  changed += 1
+                  if (Array.isArray(seg._reasons) && sourceLabel) seg._reasons.push(sourceLabel)
+                  for (const st of STOCK_CHECK_PHRASES) {
+                    if (!origTrim.includes(st) && text.includes(st)) {
+                      injectedStockCounts[st] = (injectedStockCounts[st] || 0) + 1
+                    }
+                  }
+                } else {
+                  unchanged += 1
+                }
+                applied += 1
+              }
+
+              const runSingleSegment = async (seg) => {
                 try {
                   const text = await rewriteOne(seg)
                   if (text) {
-                    const origTrim = seg.content.trim()
-                    if (text !== origTrim) {
-                      const trailing = seg.content.match(/\n+$/)?.[0] || ''
-                      seg.rewrite = text + trailing
-                      changed += 1
-                      for (const st of STOCK_CHECK_PHRASES) {
-                        if (!origTrim.includes(st) && text.includes(st)) {
-                          injectedStockCounts[st] = (injectedStockCounts[st] || 0) + 1
-                        }
-                      }
-                    } else {
-                      unchanged += 1
-                    }
-                    applied += 1
+                    recordSegmentSuccess(seg, text, 'Tier 2 單段精修')
                   } else {
                     failedSegs.push(seg.num)
                   }
@@ -2825,7 +3044,111 @@ export function apply(ctx) {
                   failedSegs.push(seg.num)
                   report.tier2.error = String(err?.message || err).slice(0, 160)
                 }
-              })
+              }
+
+              if (batchMode !== 'single' && numbered.length >= 2) {
+                const BATCH_SIZE = 5
+                const batches = []
+                for (let i = 0; i < numbered.length; i += BATCH_SIZE) {
+                  batches.push(numbered.slice(i, i + BATCH_SIZE))
+                }
+                const fallbackQueue = []
+
+                await poolMap(batches, 2, async (batch) => {
+                  if (verSignal?.aborted) throw verSignal.reason || new Error('stale-version')
+                  const useSentinel = batch.some((s) => /^\s*(?:\[\d+\]|【第\s*\d+\s*段】|SEG_\d+:)/.test(s.content))
+                  const batchExemplars = []
+                  const segBlocks = []
+
+                  for (const seg of batch) {
+                    const findings = seg.findings || []
+                    const located = Array.isArray(seg._locatedSpans) ? seg._locatedSpans : []
+                    if (located.length > 0) {
+                      report.tier2.targetedSpans = (report.tier2.targetedSpans || 0) + located.length
+                    }
+                    for (const ex of (seg._exemplars || [])) {
+                      if (!batchExemplars.includes(ex) && batchExemplars.length < 3) batchExemplars.push(ex)
+                    }
+                    const marker = useSentinel ? `<<<SEG_${seg.num}>>>` : `[${seg.num}]`
+                    const metaBits = [
+                      `命中=${findings.join('、') || '局部校對'}`,
+                      located.length ? `定位=${located.join('；')}` : '',
+                      seg.guidance ? `要求=${seg.guidance}` : '',
+                    ].filter(Boolean).join(' ｜ ')
+                    segBlocks.push(`${marker}\n（${metaBits}）\n${seg.content.trim()}`)
+                  }
+
+                  const batchPrompt = [
+                    `【批次局部校對｜mode=${mode}｜共 ${batch.length} 段】`,
+                    `每段開頭皆有 ${useSentinel ? '<<<SEG_編號>>>' : '[編號]'} 標記。請依序只輸出校對後各段正文並保留原標記；不可合併、漏段，未確診問題句逐字保留。`,
+                    batchExemplars.length ? `【對照範例（僅參考語感，勿照抄）】\n${batchExemplars.join('\n')}` : '',
+                    segBlocks.join('\n\n'),
+                  ].filter(Boolean).join('\n\n')
+
+                  const nBatch = bestOfNMode === '3'
+                    ? 3
+                    : bestOfNMode === '2'
+                      ? 2
+                      : (bestOfNMode === 'smart_2' && batch.some(s => (s.findings?.length || 0) >= 2 || s.content.length >= 180) ? 2 : 1)
+                  const temps = [undefined, 0.85, 1.0].slice(0, nBatch)
+                  if (nBatch > 1) report.tier2.bestOfNRuns += 1
+
+                  let parsedMaps = []
+                  try {
+                    report.tier2.batchCalls += temps.length
+                    const rawOutputs = await Promise.all(
+                      temps.map((t) => callOnce(batchPrompt, t, true).catch(() => ''))
+                    )
+                    parsedMaps = rawOutputs.map((out) => parseBatchOutput(out, batch))
+                  } catch (err) {
+                    report.tier2.error = String(err?.message || err).slice(0, 160)
+                    fallbackQueue.push(...batch)
+                    return
+                  }
+
+                  for (const seg of batch) {
+                    const targetSnippets = Array.isArray(seg._targetSnippets) ? seg._targetSnippets : []
+                    const origTrim = seg.content.trim()
+                    const candidates = []
+                    for (let cIdx = 0; cIdx < parsedMaps.length; cIdx++) {
+                      const rawSeg = parsedMaps[cIdx].get(seg.num)
+                      if (!rawSeg) continue
+                      const cleanedSeg = cleanModelText(rawSeg)
+                      const sc = nBatch > 1
+                        ? scoreRewriteCandidate(seg.content, cleanedSeg, guardLevel, { injectedStockCounts })
+                        : { ...validateTier2Rewrite(seg.content, cleanedSeg, guardLevel), score: 0 }
+                      if (sc.ok) candidates.push({ idx: cIdx, text: cleanedSeg, score: sc.score || 0 })
+                    }
+                    if (!candidates.length) {
+                      fallbackQueue.push(seg)
+                      continue
+                    }
+                    candidates.sort((a, b) => b.score - a.score)
+                    if (nBatch > 1 && candidates[0].idx > 0) report.tier2.bestOfNWins += 1
+                    const chosen = candidates[0].text
+                    if (targetSnippets.length > 0) {
+                      const untouched = targetSnippets.filter((sp) => chosen.includes(sp))
+                      const needFallback = untouched.length > 0 && (
+                        chosen === origTrim
+                        || untouched.length >= Math.max(2, Math.ceil(targetSnippets.length * 0.6))
+                      )
+                      if (needFallback) {
+                        fallbackQueue.push(seg)
+                        continue
+                      }
+                      report.tier2.spansFixed = (report.tier2.spansFixed || 0) + Math.max(0, targetSnippets.length - untouched.length)
+                    }
+                    recordSegmentSuccess(seg, chosen, 'Tier 2 批次校對')
+                  }
+                })
+
+                if (fallbackQueue.length > 0) {
+                  report.tier2.fallbackSingles += fallbackQueue.length
+                  await poolMap(fallbackQueue, 3, runSingleSegment)
+                }
+              } else {
+                await poolMap(numbered, 3, runSingleSegment)
+              }
               llmApplied = applied > 0
               report.tier2.failedSegments = failedSegs
               report.tier2.applied = applied
@@ -2940,7 +3263,8 @@ export function apply(ctx) {
           }
         }
         const finalText = outText
-        report.edited = finalText !== currentRaw || tier1Total > 0 || preCleanedCount > 0
+        let writtenText = finalText
+        report.edited = finalText !== currentRaw || tier1Total > 0 || preCleanedCount > 0 || metaLeakRemovedCount > 0
         if (protectedDiff) report.writeError = 'HTML 区段被改动：' + protectedDiff
 
         // v1.24：写回前先确认是不是最新一轮——不是就只报告不写回（否则每次重跑都在同一份原文上重复劳动）
@@ -2991,6 +3315,7 @@ export function apply(ctx) {
                         gameId, turn, textVersion: currentVersion, text: retryText,
                       })
                       writeOk = true
+                      writtenText = retryText
                       report.htmlSalvaged = true
                       report.writeError = ''
                       if (u2?.textVersion) {
@@ -3010,6 +3335,34 @@ export function apply(ctx) {
         }
         report.writeOk = writeOk
 
+        // v1.38：段落級 Diff ＋ 原文快照（供報告頁「改前／改後」與「一鍵還原」）
+        const reasonsByLine = new Map()
+        let lineCursor = 0
+        for (const seg of segs) {
+          const origStr = typeof seg._origContent === 'string' ? seg._origContent : seg.content
+          const lineCount = String(origStr).split('\n').length - 1
+          const reasons = Array.isArray(seg._reasons) ? seg._reasons : []
+          if (reasons.length > 0) {
+            const spanEnd = Math.max(lineCursor, lineCursor + lineCount)
+            for (let li = lineCursor; li <= spanEnd; li++) {
+              const prev = reasonsByLine.get(li) || []
+              reasonsByLine.set(li, [...new Set([...prev, ...reasons])])
+            }
+          }
+          lineCursor += lineCount
+        }
+        const diffs = buildSegmentDiffs(currentRaw, writtenText, reasonsByLine)
+        const hasSnapshot = Boolean(writeOk && writtenText !== currentRaw)
+        const snapshot = hasSnapshot
+          ? { originalRaw: currentRaw, diffs, reverted: false, savedAt: Date.now() }
+          : null
+        if (snapshot) snapshots.set(lockKey, snapshot)
+
+        report.diffs = diffs
+        report.hasSnapshot = hasSnapshot
+        report.reverted = false
+        report.canUndo = Boolean(hasSnapshot && !report.note)
+
         reports.set(lockKey, report)
         const saveVer = report.textVersion || currentVersion
         if (saveVer && typeof ctx.tavern.saveTurnData === 'function') {
@@ -3017,7 +3370,7 @@ export function apply(ctx) {
             gameId,
             turn,
             textVersion: saveVer,
-            data: { report },
+            data: snapshot ? { report, snapshot } : { report },
           }).catch(() => {})
         }
         emitLog({
@@ -3066,6 +3419,16 @@ export function apply(ctx) {
           whitelistMaskedChars: wlMask.maskedChars,
           speechObjDefects: speechObjHits.length,
           preCleanedCount,
+          metaLeakRemovedCount,
+          truncatedEnding: Boolean(wholeMetaCheck.truncatedEnding),
+          openingKind: turnBehavior.openingKind,
+          openingMonotony: openingMonotonyNow,
+          behaviorAdaptActive: behaviorAdapt.active,
+          batchMode: report.tier2.batchMode,
+          batchCalls: report.tier2.batchCalls || 0,
+          fallbackSingles: report.tier2.fallbackSingles || 0,
+          skippedLowSignal: report.tier2.skippedLowSignal || 0,
+          diffCount: diffs.length,
           modelFamily: modelMeta.family,
           concentration: concentration.score,
           isomorphicPairs: rhythmAudit.isomorphic?.pairCount || 0,
@@ -3107,7 +3470,10 @@ export function apply(ctx) {
   if (typeof ctx.tavern.onTimelineChanged === 'function') {
     ctx.tavern.onTimelineChanged(({ gameId, turn }) => {
       if (gameId && turn != null) {
-        reports.delete(`${gameId}:${turn}`)
+        const key = `${gameId}:${turn}`
+        reports.delete(key)
+        snapshots.delete(key)
+        revertedTurns.delete(key)
       }
     })
   }
@@ -3122,24 +3488,119 @@ export function apply(ctx) {
       for (const key of reports.keys()) {
         if (key.startsWith(`${gameId}:`)) reports.delete(key)
       }
+      for (const key of snapshots.keys()) {
+        if (key.startsWith(`${gameId}:`)) snapshots.delete(key)
+      }
+      for (const key of revertedTurns.keys()) {
+        if (key.startsWith(`${gameId}:`)) revertedTurns.delete(key)
+      }
     })
   }
 
   ctx.tavern.handle('dsh-tavern-autoproof/report', async ({ gameId, turn } = {}) => {
     const key = `${gameId}:${turn}`
-    if (reports.has(key)) return reports.get(key)
-    if (typeof ctx.tavern.readTurnData === 'function' && gameId && turn) {
+    let rpt = reports.get(key) || null
+    let snap = snapshots.get(key) || null
+    if (!rpt && typeof ctx.tavern.readTurnData === 'function' && gameId && turn) {
       try {
         const saved = await ctx.tavern.readTurnData({ gameId, turn })
+        if (saved?.data?.snapshot) {
+          snap = saved.data.snapshot
+          snapshots.set(key, snap)
+          if (snap.reverted) revertedTurns.add(key)
+        }
         if (saved?.data?.report) {
-          reports.set(key, saved.data.report)
-          return saved.data.report
+          rpt = saved.data.report
+          reports.set(key, rpt)
         }
       } catch {
         // ignore
       }
     }
-    return await proofTurn({ gameId, turn, force: false })
+    if (!rpt) {
+      rpt = await proofTurn({ gameId, turn, force: false })
+      snap = snapshots.get(key) || snap
+    }
+    if (rpt && gameId && turn) {
+      let isLatest = true
+      if (typeof ctx.tavern.getTurnState === 'function') {
+        const state = await ctx.tavern.getTurnState({ gameId }).catch(() => null)
+        if (state && Number.isFinite(state.turn) && state.turn !== turn) isLatest = false
+      }
+      const reverted = Boolean(snap?.reverted || rpt.reverted || revertedTurns.has(key))
+      rpt.reverted = reverted
+      rpt.hasSnapshot = Boolean(snap?.originalRaw || rpt.hasSnapshot)
+      rpt.canUndo = Boolean((snap?.originalRaw || rpt.hasSnapshot) && !reverted && isLatest)
+      if (!Array.isArray(rpt.diffs) && Array.isArray(snap?.diffs)) rpt.diffs = snap.diffs
+    }
+    return rpt
+  })
+
+  ctx.tavern.handle('dsh-tavern-autoproof/undo', async ({ gameId, turn } = {}) => {
+    if (!gameId || !turn) return { ok: false, error: '缺少 gameId 或 turn' }
+    const key = `${gameId}:${turn}`
+    let snap = snapshots.get(key) || null
+    let rpt = reports.get(key) || null
+    if ((!snap || !rpt) && typeof ctx.tavern.readTurnData === 'function') {
+      try {
+        const saved = await ctx.tavern.readTurnData({ gameId, turn })
+        if (saved?.data?.snapshot) {
+          snap = saved.data.snapshot
+          snapshots.set(key, snap)
+        }
+        if (saved?.data?.report) {
+          rpt = saved.data.report
+          reports.set(key, rpt)
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!snap || !snap.originalRaw) {
+      return { ok: false, error: '找不到此輪的原文快照（未修改或未保存）' }
+    }
+    if (snap.reverted) {
+      return { ok: true, alreadyReverted: true, report: rpt }
+    }
+    if (typeof ctx.tavern.getTurnState === 'function') {
+      const state = await ctx.tavern.getTurnState({ gameId }).catch(() => null)
+      if (state && Number.isFinite(state.turn) && state.turn !== turn) {
+        return { ok: false, error: `僅最新一輪可還原原文（目前為第 ${state.turn} 輪）` }
+      }
+    }
+    if (typeof ctx.tavern.getTurn !== 'function' || typeof ctx.tavern.editTurn !== 'function') {
+      return { ok: false, error: '宿主不支援還原寫回' }
+    }
+    const turnData = await ctx.tavern.getTurn({ gameId, turn })
+    const curVer = turnData?.textVersion || rpt?.textVersion
+    if (!curVer) return { ok: false, error: '無法取得目前文字版本' }
+
+    const updated = await ctx.tavern.editTurn({
+      gameId,
+      turn,
+      textVersion: curVer,
+      text: snap.originalRaw,
+    })
+    const nextVer = updated?.textVersion || curVer
+    revertedTurns.add(key)
+    snap.reverted = true
+    editsOf(gameId).set(turn, nextVer)
+    if (rpt) {
+      rpt.reverted = true
+      rpt.canUndo = false
+      rpt.textVersion = nextVer
+      rpt.note = '已手動一鍵還原原文（已鎖定，非手動「重新校對」不再自動改寫）'
+    }
+    if (typeof ctx.tavern.saveTurnData === 'function') {
+      await ctx.tavern.saveTurnData({
+        gameId,
+        turn,
+        textVersion: nextVer,
+        data: { report: rpt, snapshot: snap },
+      }).catch(() => {})
+    }
+    emitLog({ evt: 'undo', gameId, turn, reverted: true })
+    return { ok: true, report: rpt }
   })
 
   ctx.tavern.handle('dsh-tavern-autoproof/proof', async ({ gameId, turn } = {}) => {
@@ -3377,4 +3838,13 @@ export const __test = Object.freeze({
   calcAiConcentration,
   detectModelFamily,
   checkAddressConsistency,
+  parseBatchOutput,
+  buildSegmentDiffs,
+  isRhetoricalSkeleton,
+  extractRhetoricalSkeletons,
+  computeDecayedCooldown,
+  classifyTurnOpening,
+  analyzeTurnBehavioralMetrics,
+  deriveBehavioralAdaptation,
+  scanAndCleanMetaLeakage,
 })

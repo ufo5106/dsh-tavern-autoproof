@@ -1,14 +1,276 @@
-// dsh-tavern-autoproof v1.37.0 瀏覽器側模組（分區設定面板 + 文風與基因萃取 + 模型家族適配／AI味濃度／句法同構 + 三分區校對報告）
+// dsh-tavern-autoproof v1.38.0 瀏覽器側模組（澄文 · AutoProof：全皮膚自適應高定 UI + 環形濃度儀 + 連續旋轉載入 + Diff／一鍵還原）
 window.__ModuleLoader__.load({
   id: 'dsh-tavern-autoproof',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
 
+    function ensureAutoProofStyles() {
+      if (typeof document === 'undefined' || !document.head) return
+      const existing = document.getElementById('dsh-autoproof-ui-style')
+      if (existing && existing.dataset.ver === '1.38-adaptive') return
+      if (existing) existing.remove()
+      const style = document.createElement('style')
+      style.id = 'dsh-autoproof-ui-style'
+      style.dataset.ver = '1.38-adaptive'
+      style.textContent = `
+        @keyframes ap-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes ap-fade-in {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes ap-sheen {
+          from { transform: translateX(-130%) skewX(-18deg); }
+          to { transform: translateX(240%) skewX(-18deg); }
+        }
+        .ap-modal {
+          --ap-surface: var(--dsh-tavern-accent-surface, var(--dsw-alias-bg-layer-1, var(--gal-ui-surface, #1e293b)));
+          --ap-bg: var(--dsh-tavern-accent-cream, var(--dsw-alias-bg-base, #0f172a));
+          --ap-accent: var(--dsh-tavern-accent, var(--dsw-alias-brand-primary, var(--gal-ui-accent, #38bdf8)));
+          --ap-accent-ink: var(--dsw-alias-brand-text, var(--gal-ui-accent-ink, #ffffff));
+          --ap-accent-soft: var(--dsh-tavern-accent-soft, color-mix(in srgb, var(--ap-accent) 14%, transparent));
+          --ap-accent-border: var(--dsh-tavern-accent-border, color-mix(in srgb, var(--ap-accent) 42%, transparent));
+          --ap-ink: var(--dsh-tavern-accent-ink, var(--dsw-alias-label-primary, var(--gal-ui-ink, #f8fafc)));
+          --ap-muted: var(--dsh-tavern-accent-muted, var(--dsw-alias-label-secondary, #94a3b8));
+          --ap-border: var(--dsh-tavern-accent-hairline, var(--dsw-alias-border-l1, rgba(148, 163, 184, 0.24)));
+          --ap-panel: color-mix(in srgb, var(--ap-bg) 46%, var(--ap-surface) 54%);
+          --ap-panel-soft: color-mix(in srgb, var(--ap-bg) 74%, var(--ap-surface) 26%);
+          --ap-good: #059669;
+          --ap-good-soft: color-mix(in srgb, #10b981 13%, transparent);
+          --ap-good-border: color-mix(in srgb, #10b981 36%, transparent);
+          --ap-warn: #b45309;
+          --ap-warn-soft: color-mix(in srgb, #f59e0b 14%, transparent);
+          --ap-warn-border: color-mix(in srgb, #f59e0b 40%, transparent);
+          --ap-bad: var(--dsh-tavern-accent-error, #dc2626);
+          --ap-bad-soft: color-mix(in srgb, var(--ap-bad) 13%, transparent);
+          --ap-bad-border: color-mix(in srgb, var(--ap-bad) 36%, transparent);
+          --ap-radius: var(--dsh-tavern-radius-lg, 14px);
+          --ap-radius-md: var(--dsh-tavern-radius-md, 9px);
+          --ap-radius-sm: var(--dsh-tavern-radius-sm, 6px);
+          --ap-font: var(--dsh-tavern-font-sans, system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif);
+          --ap-display-font: var(--dsh-tavern-font-display, var(--ap-font));
+          --ap-shadow: 0 22px 54px rgba(15, 23, 42, 0.28);
+          display: block;
+          box-sizing: border-box;
+          font-family: var(--ap-font);
+          background: var(--ap-surface);
+          color: var(--ap-ink);
+          border: 1px solid var(--ap-border);
+          border-radius: var(--ap-radius);
+          box-shadow: var(--ap-shadow);
+          animation: ap-fade-in 0.22s ease-out both;
+        }
+        body[data-ds-dark-theme] .ap-modal {
+          --ap-good: #34d399;
+          --ap-warn: #fbbf24;
+          --ap-bad: var(--dsh-tavern-accent-error, #f87171);
+          --ap-shadow: 0 26px 62px rgba(0, 0, 0, 0.58);
+        }
+        .ap-modal * { box-sizing: border-box; }
+        .ap-modal .ap-title {
+          margin: 0;
+          font-family: var(--ap-display-font);
+          font-size: 15px;
+          font-weight: 700;
+          line-height: 1.35;
+          color: var(--ap-ink);
+        }
+        .ap-modal .ap-sub {
+          font-size: 11px;
+          color: var(--ap-muted);
+          margin-top: 2px;
+        }
+        .ap-modal .ap-btn {
+          position: relative;
+          overflow: hidden;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          padding: 6px 12px;
+          border-radius: var(--ap-radius-sm);
+          font-size: 12px;
+          font-weight: 600;
+          font-family: inherit;
+          cursor: pointer;
+          transition: transform 0.15s ease, filter 0.15s ease, background 0.18s ease, border-color 0.18s ease;
+          white-space: nowrap;
+        }
+        .ap-modal .ap-btn:hover:not(:disabled) {
+          transform: translateY(-1px);
+          filter: brightness(1.06);
+        }
+        .ap-modal .ap-btn:active:not(:disabled) {
+          transform: translateY(0) scale(0.985);
+        }
+        .ap-modal .ap-btn:disabled {
+          opacity: 0.6;
+          cursor: wait;
+        }
+        .ap-modal .ap-btn-primary::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          width: 45%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.24), transparent);
+          transform: translateX(-140%) skewX(-18deg);
+          pointer-events: none;
+        }
+        .ap-modal .ap-btn-primary:hover:not(:disabled)::after {
+          animation: ap-sheen 0.65s ease;
+        }
+        .ap-modal .ap-tab-bar {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          padding: 4px;
+          border-radius: var(--ap-radius-md);
+          background: var(--ap-panel-soft);
+          border: 1px solid var(--ap-border);
+          margin-bottom: 12px;
+        }
+        .ap-modal .ap-tab {
+          flex: 1 1 auto;
+          padding: 6px 10px;
+          border-radius: var(--ap-radius-sm);
+          border: none;
+          font-size: 12px;
+          font-weight: 600;
+          font-family: inherit;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background 0.18s ease, color 0.18s ease;
+        }
+        .ap-modal .ap-field {
+          padding: 10px 12px;
+          border-radius: var(--ap-radius-md);
+          background: var(--ap-panel);
+          border: 1px solid var(--ap-border);
+          margin-bottom: 8px;
+          transition: border-color 0.18s ease;
+        }
+        .ap-modal .ap-field:hover {
+          border-color: var(--ap-accent-border);
+        }
+        .ap-modal .ap-switch {
+          position: relative;
+          width: 40px;
+          height: 22px;
+          border-radius: 999px;
+          padding: 0;
+          border: 1px solid var(--ap-border);
+          background: var(--ap-panel-soft);
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: background 0.2s ease, border-color 0.2s ease;
+        }
+        .ap-modal .ap-switch[data-on="true"] {
+          background: var(--ap-accent);
+          border-color: var(--ap-accent);
+        }
+        .ap-modal .ap-switch-thumb {
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 16px;
+          height: 16px;
+          border-radius: 999px;
+          background: var(--ap-ink);
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+          transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease;
+        }
+        .ap-modal .ap-switch[data-on="true"] .ap-switch-thumb {
+          transform: translateX(18px);
+          background: var(--ap-accent-ink);
+        }
+        .ap-modal .ap-input,
+        .ap-modal .ap-select,
+        .ap-modal .ap-textarea {
+          border-radius: var(--ap-radius-sm);
+          border: 1px solid var(--ap-border);
+          background: var(--ap-panel-soft);
+          color: var(--ap-ink);
+          font-size: 12px;
+          font-family: inherit;
+          outline: none;
+          transition: border-color 0.16s ease;
+        }
+        .ap-modal .ap-input:focus,
+        .ap-modal .ap-select:focus,
+        .ap-modal .ap-textarea:focus {
+          border-color: var(--ap-accent);
+        }
+        .ap-modal .ap-help-box {
+          margin-top: 8px;
+          padding: 8px 10px;
+          border-radius: var(--ap-radius-sm);
+          background: var(--ap-accent-soft);
+          border-left: 3px solid var(--ap-accent);
+          color: var(--ap-ink);
+          font-size: 12px;
+          line-height: 1.55;
+          white-space: pre-line;
+          animation: ap-fade-in 0.18s ease-out both;
+        }
+        .ap-modal .ap-spinner-ring {
+          animation: ap-spin 1.05s linear infinite;
+          transform-origin: 50% 50%;
+          will-change: transform;
+        }
+        .ap-modal .ap-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .ap-modal .ap-scroll::-webkit-scrollbar-track { background: transparent; }
+        .ap-modal .ap-scroll::-webkit-scrollbar-thumb {
+          background: color-mix(in srgb, var(--ap-muted) 35%, transparent);
+          border-radius: 999px;
+        }
+      `
+      document.head.appendChild(style)
+    }
+
+    function renderBrandLogo(boxSize = 36) {
+      const iconSize = Math.round(boxSize * 0.56)
+      return h(
+        'div',
+        {
+          style: {
+            width: `${boxSize}px`,
+            height: `${boxSize}px`,
+            borderRadius: 'var(--ap-radius-md)',
+            background: 'var(--ap-accent-soft)',
+            border: '1px solid var(--ap-accent-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          },
+        },
+        h(
+          'svg',
+          { width: iconSize, height: iconSize, viewBox: '0 0 24 24', fill: 'none' },
+          h('path', {
+            d: 'M12 3L4 7V12C4 16.97 7.42 21.5 12 22.5C16.58 21.5 20 16.97 20 12V7L12 3Z',
+            stroke: 'var(--ap-accent)',
+            strokeWidth: 1.8,
+            strokeLinejoin: 'round',
+          }),
+          h('path', {
+            d: 'M9 12.2L11.2 14.4L15.5 9.8',
+            stroke: 'var(--ap-accent)',
+            strokeWidth: 1.9,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+          })
+        )
+      )
+    }
+
     const TIER_BADGE = {
-      local: { text: '純本地 0 Token', bg: 'rgba(16, 185, 129, 0.18)', color: '#6ee7b7', border: '1px solid rgba(16, 185, 129, 0.35)' },
-      hybrid: { text: '本地＋安全分流', bg: 'rgba(245, 158, 11, 0.16)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.35)' },
-      online: { text: '線上 Tier 2', bg: 'rgba(59, 130, 246, 0.18)', color: '#93c5fd', border: '1px solid rgba(59, 130, 246, 0.35)' },
+      local: { text: '純本地 0 Token', bg: 'var(--ap-good-soft)', color: 'var(--ap-good)', border: '1px solid var(--ap-good-border)' },
+      hybrid: { text: '本地＋安全分流', bg: 'var(--ap-warn-soft)', color: 'var(--ap-warn)', border: '1px solid var(--ap-warn-border)' },
+      online: { text: '線上 Tier 2', bg: 'var(--ap-accent-soft)', color: 'var(--ap-accent)', border: '1px solid var(--ap-accent-border)' },
     }
 
     const GROUP_TABS = [
@@ -125,6 +387,7 @@ window.__ModuleLoader__.load({
     }
 
     function SettingsOverlay({ ui, gameId, close }) {
+      ensureAutoProofStyles()
       const [loading, setLoading] = React.useState(true)
       const [schema, setSchema] = React.useState([])
       const [draft, setDraft] = React.useState({})
@@ -274,25 +537,21 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
+              role: 'switch',
+              'aria-checked': on,
+              'aria-label': field.label,
+              'data-on': on ? 'true' : 'false',
+              className: 'ap-switch',
               onClick: () => updateField(field.key, !on),
-              style: {
-                padding: '4px 12px',
-                borderRadius: '999px',
-                border: on ? '1px solid #10b981' : '1px solid rgba(148,163,184,0.35)',
-                background: on ? 'rgba(16, 185, 129, 0.22)' : 'rgba(15, 23, 42, 0.45)',
-                color: on ? '#6ee7b7' : '#94a3b8',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                minWidth: '64px',
-              },
+              title: on ? '已開啟（點擊關閉）' : '已關閉（點擊開啟）',
             },
-            on ? '已開啟' : '已關閉'
+            h('span', { className: 'ap-switch-thumb' })
           )
         }
         if (field.type === 'number') {
           return h('input', {
             type: 'number',
+            className: 'ap-input',
             min: field.min,
             max: field.max,
             step: field.step || 1,
@@ -300,12 +559,7 @@ window.__ModuleLoader__.load({
             onChange: (e) => updateField(field.key, Number(e.target.value)),
             style: {
               width: '76px',
-              padding: '4px 8px',
-              borderRadius: '6px',
-              border: '1px solid rgba(148,163,184,0.35)',
-              background: 'rgba(15, 23, 42, 0.65)',
-              color: 'inherit',
-              fontSize: '12px',
+              padding: '5px 8px',
               textAlign: 'right',
             },
           })
@@ -315,19 +569,14 @@ window.__ModuleLoader__.load({
           return h(
             'select',
             {
+              className: 'ap-select',
               value: String(val ?? field.default ?? ''),
               onChange: (e) => updateField(field.key, e.target.value),
               style: {
                 width: '100%',
                 maxWidth: '260px',
                 minWidth: '150px',
-                boxSizing: 'border-box',
                 padding: '6px 8px',
-                borderRadius: '6px',
-                border: '1px solid rgba(148,163,184,0.35)',
-                background: '#0f172a',
-                color: '#f8fafc',
-                fontSize: '12px',
                 cursor: 'pointer',
               },
             },
@@ -336,6 +585,7 @@ window.__ModuleLoader__.load({
         }
         if (field.type === 'textarea') {
           return h('textarea', {
+            className: 'ap-textarea',
             value: String(val ?? ''),
             rows: field.rows || 3,
             placeholder: field.placeholder || '',
@@ -343,17 +593,10 @@ window.__ModuleLoader__.load({
             style: {
               width: '100%',
               minHeight: '78px',
-              boxSizing: 'border-box',
               marginTop: '8px',
               padding: '7px 9px',
-              borderRadius: '6px',
-              border: '1px solid rgba(148,163,184,0.35)',
-              background: '#0f172a',
-              color: '#f8fafc',
-              fontSize: '12px',
               lineHeight: 1.5,
               resize: 'vertical',
-              fontFamily: 'inherit',
             },
           })
         }
@@ -368,13 +611,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             key: field.key,
-            style: {
-              padding: '10px 12px',
-              borderRadius: '8px',
-              background: 'rgba(15, 23, 42, 0.42)',
-              border: '1px solid rgba(148, 163, 184, 0.16)',
-              marginBottom: '8px',
-            },
+            className: 'ap-field',
           },
           h(
             'div',
@@ -382,7 +619,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: '1 1 200px', minWidth: 0 } },
-              h('span', { style: { fontSize: '13px', fontWeight: 600 } }, field.label),
+              h('span', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--ap-ink)' } }, field.label),
               h(
                 'button',
                 {
@@ -393,9 +630,9 @@ window.__ModuleLoader__.load({
                     width: '18px',
                     height: '18px',
                     borderRadius: '999px',
-                    border: helpOpen ? '1px solid #38bdf8' : '1px solid rgba(148, 163, 184, 0.45)',
-                    background: helpOpen ? 'rgba(56, 189, 248, 0.22)' : 'transparent',
-                    color: helpOpen ? '#7dd3fc' : '#cbd5e1',
+                    border: helpOpen ? '1px solid var(--ap-accent)' : '1px solid var(--ap-border)',
+                    background: helpOpen ? 'var(--ap-accent-soft)' : 'transparent',
+                    color: helpOpen ? 'var(--ap-accent)' : 'var(--ap-muted)',
                     fontSize: '11px',
                     fontWeight: 700,
                     lineHeight: '16px',
@@ -426,23 +663,7 @@ window.__ModuleLoader__.load({
           ),
           isTextarea ? renderControl(field) : null,
           helpOpen && field.help
-            ? h(
-                'div',
-                {
-                  style: {
-                    marginTop: '8px',
-                    padding: '8px 10px',
-                    borderRadius: '6px',
-                    background: 'rgba(30, 58, 138, 0.25)',
-                    border: '1px solid rgba(96, 165, 250, 0.28)',
-                    color: '#e2e8f0',
-                    fontSize: '12px',
-                    lineHeight: 1.55,
-                    whiteSpace: 'pre-line',
-                  },
-                },
-                field.help
-              )
+            ? h('div', { className: 'ap-help-box' }, field.help)
             : null
         )
       }
@@ -450,34 +671,39 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
+          className: 'ap-modal',
           style: {
-            display: 'block',
             width: 'min(640px, calc(100vw - 24px))',
             maxWidth: '100%',
-            boxSizing: 'border-box',
             margin: '16px auto',
             padding: '16px',
-            borderRadius: '12px',
-            background: 'var(--gal-ui-surface, #1e293b)',
-            color: 'var(--gal-ui-ink, #f8fafc)',
-            boxShadow: '0 22px 50px rgba(0,0,0,0.52)',
           },
         },
         h(
           'div',
-          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
-          h('h3', { style: { margin: 0, fontSize: '15px', lineHeight: 1.35 } }, 'AutoProof v1.34 校對設定（點 ? 看說明）'),
+          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', paddingBottom: '12px', marginBottom: '12px', borderBottom: '1px solid var(--ap-border)' } },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 } },
+            renderBrandLogo(36),
+            h(
+              'div',
+              { style: { minWidth: 0 } },
+              h('h3', { className: 'ap-title' }, '澄文 · AutoProof v1.38 設定'),
+              h('div', { className: 'ap-sub' }, '點擊各項目 ? 查看細節 · 配色自動跟隨酒館皮膚')
+            )
+          ),
           h(
             'button',
             {
+              type: 'button',
               onClick: close,
+              className: 'ap-btn',
               style: {
-                padding: '4px 10px',
-                borderRadius: '6px',
-                border: '1px solid rgba(148,163,184,0.3)',
+                padding: '5px 10px',
+                border: '1px solid var(--ap-border)',
                 background: 'transparent',
-                color: 'inherit',
-                cursor: 'pointer',
+                color: 'var(--ap-muted)',
                 flexShrink: 0,
               },
             },
@@ -486,7 +712,7 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' } },
+          { className: 'ap-tab-bar' },
           ...GROUP_TABS.map((t) =>
             h(
               'button',
@@ -494,16 +720,10 @@ window.__ModuleLoader__.load({
                 key: t.id,
                 type: 'button',
                 onClick: () => setActiveTab(t.id),
+                className: 'ap-tab',
                 style: {
-                  padding: '6px 10px',
-                  borderRadius: '8px',
-                  border: activeTab === t.id ? '1px solid #38bdf8' : '1px solid rgba(148,163,184,0.25)',
-                  background: activeTab === t.id ? 'rgba(56, 189, 248, 0.18)' : 'rgba(15, 23, 42, 0.35)',
-                  color: activeTab === t.id ? '#7dd3fc' : '#cbd5e1',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer',
+                  background: activeTab === t.id ? 'var(--ap-accent)' : 'transparent',
+                  color: activeTab === t.id ? 'var(--ap-accent-ink)' : 'var(--ap-muted)',
                 },
               },
               t.label
@@ -512,9 +732,9 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { overflowY: 'auto', maxHeight: '58vh', paddingRight: '2px' } },
+          { className: 'ap-scroll', style: { overflowY: 'auto', maxHeight: '58vh', paddingRight: '2px' } },
           loading
-            ? h('div', { style: { padding: '20px', textAlign: 'center', opacity: 0.75, fontSize: '13px' } }, '載入設定中…')
+            ? h('div', { style: { padding: '24px', textAlign: 'center', color: 'var(--ap-muted)', fontSize: '13px' } }, '載入設定中…')
             : h(
                 React.Fragment,
                 null,
@@ -523,17 +743,17 @@ window.__ModuleLoader__.load({
                       'div',
                       {
                         style: {
-                          padding: '10px 12px',
-                          borderRadius: '8px',
-                          background: 'rgba(30, 41, 59, 0.72)',
-                          border: '1px solid rgba(56, 189, 248, 0.28)',
+                          padding: '12px',
+                          borderRadius: 'var(--ap-radius-md)',
+                          background: 'linear-gradient(135deg, var(--ap-accent-soft), var(--ap-panel))',
+                          border: '1px solid var(--ap-accent-border)',
                           marginBottom: '10px',
                         },
                       },
                       h(
                         'div',
-                        { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' } },
-                        h('span', { style: { fontSize: '13px', fontWeight: 700, color: '#7dd3fc' } }, '一鍵從範文／整本小說萃取（同人卡／小說卡適用）'),
+                        { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } },
+                        h('span', { style: { fontSize: '13px', fontWeight: 700, color: 'var(--ap-accent)' } }, '一鍵從範文／整本小說萃取（同人卡／小說卡適用）'),
                         h(
                           'div',
                           { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
@@ -550,16 +770,11 @@ window.__ModuleLoader__.load({
                               type: 'button',
                               disabled: extracting,
                               onClick: () => fileInputRef.current?.click(),
+                              className: 'ap-btn',
                               style: {
-                                padding: '5px 10px',
-                                borderRadius: '6px',
-                                border: '1px solid rgba(16, 185, 129, 0.55)',
-                                background: 'rgba(16, 185, 129, 0.16)',
-                                color: '#a7f3d0',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                whiteSpace: 'nowrap',
-                                cursor: extracting ? 'wait' : 'pointer',
+                                border: '1px solid var(--ap-good-border)',
+                                background: 'var(--ap-good-soft)',
+                                color: 'var(--ap-good)',
                               },
                             },
                             '上傳整本小說 (.txt/.md)'
@@ -570,19 +785,14 @@ window.__ModuleLoader__.load({
                               type: 'button',
                               disabled: extracting,
                               onClick: handleExtractStyle,
+                              className: 'ap-btn ap-btn-primary',
                               style: {
-                                padding: '5px 10px',
-                                borderRadius: '6px',
-                                border: '1px solid rgba(56, 189, 248, 0.55)',
-                                background: 'rgba(14, 165, 233, 0.2)',
-                                color: '#e0f2fe',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                whiteSpace: 'nowrap',
-                                cursor: extracting ? 'wait' : 'pointer',
+                                border: '1px solid var(--ap-accent)',
+                                background: 'var(--ap-accent)',
+                                color: 'var(--ap-accent-ink)',
                               },
                             },
-                            extracting ? '萃取中…' : '一鍵萃取文風與基因'
+                            extracting ? '萃取中…' : '✦ 一鍵萃取文風與基因'
                           )
                         )
                       ),
@@ -591,11 +801,11 @@ window.__ModuleLoader__.load({
                         {
                           style: {
                             fontSize: '11px',
-                            color: '#cbd5e1',
-                            background: 'rgba(15, 23, 42, 0.48)',
-                            border: '1px solid rgba(148, 163, 184, 0.2)',
-                            borderRadius: '6px',
-                            padding: '6px 8px',
+                            color: 'var(--ap-muted)',
+                            background: 'var(--ap-panel-soft)',
+                            border: '1px solid var(--ap-border)',
+                            borderRadius: 'var(--ap-radius-sm)',
+                            padding: '7px 9px',
                             marginBottom: '8px',
                             lineHeight: 1.5,
                           },
@@ -608,7 +818,7 @@ window.__ModuleLoader__.load({
                             {
                               style: {
                                 fontSize: '11px',
-                                color: '#93c5fd',
+                                color: 'var(--ap-accent)',
                                 marginBottom: '6px',
                                 lineHeight: 1.45,
                                 wordBreak: 'break-word',
@@ -618,6 +828,7 @@ window.__ModuleLoader__.load({
                           )
                         : null,
                       h('textarea', {
+                        className: 'ap-textarea',
                         value: sampleText,
                         rows: 4,
                         placeholder: '可點「上傳整本小說 (.txt/.md)」自動統計全書節奏並均勻採樣（支援 UTF-8／GBK／Big5），或直接貼上一段範文後按「一鍵萃取文風卡」…',
@@ -625,16 +836,9 @@ window.__ModuleLoader__.load({
                         style: {
                           width: '100%',
                           minHeight: '86px',
-                          boxSizing: 'border-box',
                           padding: '7px 9px',
-                          borderRadius: '6px',
-                          border: '1px solid rgba(148,163,184,0.35)',
-                          background: '#0f172a',
-                          color: '#f8fafc',
-                          fontSize: '12px',
                           lineHeight: 1.5,
                           resize: 'vertical',
-                          fontFamily: 'inherit',
                         },
                       })
                     )
@@ -648,18 +852,23 @@ window.__ModuleLoader__.load({
               {
                 style: {
                   marginTop: '8px',
-                  padding: '6px 10px',
-                  borderRadius: '6px',
+                  padding: '7px 10px',
+                  borderRadius: 'var(--ap-radius-sm)',
                   background: statusMsg.startsWith('✓')
-                    ? 'rgba(16, 185, 129, 0.16)'
+                    ? 'var(--ap-good-soft)'
                     : /^(?:正在|已讀取)/.test(statusMsg)
-                      ? 'rgba(56, 189, 248, 0.16)'
-                      : 'rgba(239, 68, 68, 0.16)',
+                      ? 'var(--ap-accent-soft)'
+                      : 'var(--ap-bad-soft)',
+                  border: statusMsg.startsWith('✓')
+                    ? '1px solid var(--ap-good-border)'
+                    : /^(?:正在|已讀取)/.test(statusMsg)
+                      ? '1px solid var(--ap-accent-border)'
+                      : '1px solid var(--ap-bad-border)',
                   color: statusMsg.startsWith('✓')
-                    ? '#6ee7b7'
+                    ? 'var(--ap-good)'
                     : /^(?:正在|已讀取)/.test(statusMsg)
-                      ? '#7dd3fc'
-                      : '#fca5a5',
+                      ? 'var(--ap-accent)'
+                      : 'var(--ap-bad)',
                   fontSize: '12px',
                 },
               },
@@ -668,21 +877,18 @@ window.__ModuleLoader__.load({
           : null,
         h(
           'div',
-          { style: { display: 'flex', gap: '8px', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' } },
+          { style: { display: 'flex', gap: '8px', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--ap-border)', flexWrap: 'wrap' } },
           h(
             'button',
             {
               type: 'button',
               disabled: saving,
               onClick: handleReset,
+              className: 'ap-btn',
               style: {
-                padding: '6px 10px',
-                borderRadius: '6px',
-                border: '1px solid rgba(148,163,184,0.3)',
+                border: '1px solid var(--ap-border)',
                 background: 'transparent',
-                color: '#cbd5e1',
-                fontSize: '12px',
-                cursor: 'pointer',
+                color: 'var(--ap-muted)',
               },
             },
             '恢復預設'
@@ -696,15 +902,11 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 disabled: saving,
                 onClick: () => handleSave('global'),
+                className: 'ap-btn',
                 style: {
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(56, 189, 248, 0.45)',
-                  background: 'rgba(56, 189, 248, 0.14)',
-                  color: '#7dd3fc',
-                  fontSize: '12px',
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer',
+                  border: '1px solid var(--ap-accent-border)',
+                  background: 'var(--ap-accent-soft)',
+                  color: 'var(--ap-accent)',
                 },
               },
               '設為全域預設'
@@ -715,16 +917,11 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 disabled: saving,
                 onClick: () => handleSave('game'),
+                className: 'ap-btn ap-btn-primary',
                 style: {
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#10b981',
-                  color: '#fff',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer',
+                  border: '1px solid var(--ap-accent)',
+                  background: 'var(--ap-accent)',
+                  color: 'var(--ap-accent-ink)',
                 },
               },
               '儲存至本角色卡'
@@ -734,15 +931,11 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 onClick: close,
+                className: 'ap-btn',
                 style: {
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(148,163,184,0.35)',
+                  border: '1px solid var(--ap-border)',
                   background: 'transparent',
-                  color: 'inherit',
-                  fontSize: '12px',
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer',
+                  color: 'var(--ap-ink)',
                 },
               },
               '關閉'
@@ -752,8 +945,9 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // v1.21：点「重新校对」立刻出这个窗口——先显示进度，跑完原地换成报告，失败也显示原因
+    // v1.21：點「重新校對」立刻出這個窗口——先顯示連續旋轉進度，跑完原地換成報告，失敗也顯示原因
     function ProofRunner({ ui, gameId, turn, close }) {
+      ensureAutoProofStyles()
       const [report, setReport] = React.useState(null)
       const [error, setError] = React.useState('')
       const [elapsed, setElapsed] = React.useState(0)
@@ -771,16 +965,90 @@ window.__ModuleLoader__.load({
         return () => { alive = false; clearInterval(timer) }
       }, [])
       if (error) {
-        return h('div', { style: { padding: 16, minWidth: 260 } },
-          h('div', { style: { color: '#f87171', marginBottom: 8 } }, '校對失敗：' + error),
-          h('button', { onClick: close, style: { padding: '4px 14px' } }, '關閉'))
+        return h(
+          'div',
+          { className: 'ap-modal', style: { width: 'min(420px, calc(100vw - 24px))', margin: '10vh auto', padding: '18px' } },
+          h('div', { style: { color: 'var(--ap-bad)', fontWeight: 600, fontSize: '13px', marginBottom: '12px', lineHeight: 1.55 } }, '校對失敗：' + error),
+          h('button', { type: 'button', onClick: close, className: 'ap-btn', style: { border: '1px solid var(--ap-border)', background: 'transparent', color: 'var(--ap-ink)' } }, '關閉')
+        )
       }
       if (report) return renderReportOverlay(ui, gameId, turn, report, close)
-      return h('div', { style: { padding: 16, minWidth: 260 } },
-        h('div', { style: { marginBottom: 6 } }, `校對中…（第 ${turn} 輪）`),
-        h('div', { style: { opacity: 0.7, fontSize: 12, lineHeight: 1.6 } },
-          `已等待 ${elapsed} 秒。含模型改寫時通常 1–3 分鐘；可先關掉，跑完再來點「校對」看報告。`),
-        h('button', { onClick: close, style: { marginTop: 12, padding: '4px 14px' } }, '關閉'))
+
+      const gradId = 'ap-spin-grad'
+      return h(
+        'div',
+        {
+          className: 'ap-modal',
+          style: {
+            width: 'min(440px, calc(100vw - 24px))',
+            margin: '8vh auto',
+            padding: '22px 20px',
+            textAlign: 'center',
+          },
+        },
+        h(
+          'div',
+          { style: { position: 'relative', width: '76px', height: '76px', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+          h(
+            'svg',
+            { className: 'ap-spinner-ring', width: 76, height: 76, viewBox: '0 0 76 76', style: { position: 'absolute', inset: 0 } },
+            h(
+              'defs',
+              null,
+              h(
+                'linearGradient',
+                { id: gradId, x1: '0%', y1: '0%', x2: '100%', y2: '100%' },
+                h('stop', { offset: '0%', stopColor: 'var(--ap-accent)', stopOpacity: 1 }),
+                h('stop', { offset: '70%', stopColor: 'var(--ap-accent)', stopOpacity: 0.45 }),
+                h('stop', { offset: '100%', stopColor: 'var(--ap-accent)', stopOpacity: 0.06 })
+              )
+            ),
+            h('circle', {
+              cx: 38,
+              cy: 38,
+              r: 31,
+              fill: 'none',
+              stroke: 'var(--ap-border)',
+              strokeWidth: 4.5,
+            }),
+            h('circle', {
+              cx: 38,
+              cy: 38,
+              r: 31,
+              fill: 'none',
+              stroke: `url(#${gradId})`,
+              strokeWidth: 4.5,
+              strokeDasharray: '146 50',
+              strokeLinecap: 'round',
+            })
+          ),
+          renderBrandLogo(38)
+        ),
+        h('div', { className: 'ap-title', style: { fontSize: '15px' } }, `澄文 · AutoProof 校對中（第 ${turn} 輪）`),
+        h('div', { className: 'ap-sub', style: { fontSize: '12px', marginTop: '6px', lineHeight: 1.6 } }, `已執行 ${elapsed} 秒 · 採用 5 段批次精編與低訊號過濾`),
+        h(
+          'div',
+          {
+            style: {
+              marginTop: '12px',
+              padding: '10px 12px',
+              borderRadius: 'var(--ap-radius-md)',
+              background: 'var(--ap-panel)',
+              border: '1px solid var(--ap-border)',
+              fontSize: '11px',
+              color: 'var(--ap-muted)',
+              lineHeight: 1.55,
+              textAlign: 'left',
+            },
+          },
+          '處理流程：Tier 1 本地 0-Token 淨化與濃度掃描 → 低訊號段落跳過 → Tier 2 批次精修寫回。含模型改寫時約需 15 秒～2 分鐘，可先關掉視窗，跑完後點訊息下方「校對」查看結果。'
+        ),
+        h(
+          'div',
+          { style: { marginTop: '14px', display: 'flex', justifyContent: 'center' } },
+          h('button', { type: 'button', onClick: close, className: 'ap-btn', style: { border: '1px solid var(--ap-border)', background: 'transparent', color: 'var(--ap-ink)', padding: '6px 16px' } }, '背景運行並關閉')
+        )
+      )
     }
 
     function openSettingsModal(ui, gameId) {
@@ -815,11 +1083,21 @@ window.__ModuleLoader__.load({
       embodied_overload: '生理反應連發過度',
       cohesion_chain: '段落過度平滑承接',
       iso_rhythm: '句拍同構重複',
+      opening_monotony: '連續三輪相同開場',
     }
 
     const fmtFlags = (arr = []) => arr.map((k) => FLAG_LABELS[k] || k).join('、')
 
     function renderReportOverlay(ui, gameId, turn, report, close) {
+      return h(ReportOverlay, { ui, gameId, turn, initialReport: report, close })
+    }
+
+    function ReportOverlay({ ui, gameId, turn, initialReport, close }) {
+      ensureAutoProofStyles()
+      const [report, setReport] = React.useState(initialReport)
+      const [undoBusy, setUndoBusy] = React.useState(false)
+      const [undoError, setUndoError] = React.useState('')
+
       const item = (label, value, color) =>
         h(
           'div',
@@ -831,14 +1109,14 @@ window.__ModuleLoader__.load({
               alignItems: 'flex-start',
               gap: '12px',
               padding: '6px 0',
-              borderBottom: '1px solid rgba(148, 163, 184, 0.16)',
+              borderBottom: '1px solid var(--ap-border)',
               fontSize: '13px',
             },
           },
-          h('span', { style: { opacity: 0.78, flexShrink: 0 } }, label),
+          h('span', { style: { color: 'var(--ap-muted)', flexShrink: 0 } }, label),
           h(
             'strong',
-            { style: { textAlign: 'right', wordBreak: 'break-word', color: color || 'inherit' } },
+            { style: { textAlign: 'right', wordBreak: 'break-word', color: color || 'var(--ap-ink)' } },
             String(value ?? '-')
           )
         )
@@ -849,13 +1127,14 @@ window.__ModuleLoader__.load({
           {
             key: `sec-${title}`,
             style: {
-              marginTop: '12px',
+              marginTop: '14px',
               marginBottom: '4px',
               paddingBottom: '4px',
-              borderBottom: '1px solid rgba(56, 189, 248, 0.32)',
+              borderBottom: '1px solid var(--ap-accent-border)',
               fontSize: '12px',
               fontWeight: 700,
-              color: '#7dd3fc',
+              fontFamily: 'var(--ap-display-font)',
+              color: 'var(--ap-accent)',
               letterSpacing: '0.03em',
             },
           },
@@ -866,35 +1145,36 @@ window.__ModuleLoader__.load({
         return h(
           'div',
           {
+            className: 'ap-modal',
             style: {
-              maxWidth: '520px',
+              width: 'min(520px, calc(100vw - 24px))',
               margin: '8vh auto',
               padding: '20px',
-              borderRadius: '12px',
-              background: 'var(--gal-ui-surface, #1e293b)',
-              color: 'var(--gal-ui-ink, #f8fafc)',
-              boxShadow: '0 20px 45px rgba(0,0,0,0.45)',
             },
           },
-          h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, `自動校對報告（第 ${turn} 輪）`),
-          h('p', { style: { fontSize: '13px', opacity: 0.8 } }, '尚無本輪校對資料，請點擊下方按鈕執行校對。'),
           h(
             'div',
-            { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' } },
+            { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' } },
+            renderBrandLogo(36),
+            h('h3', { className: 'ap-title', style: { fontSize: '16px' } }, `澄文 · AutoProof 報告（第 ${turn} 輪）`)
+          ),
+          h('p', { style: { fontSize: '13px', color: 'var(--ap-muted)', margin: 0 } }, '尚無本輪校對資料，請點擊下方按鈕執行校對。'),
+          h(
+            'div',
+            { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', flexWrap: 'wrap' } },
             h(
               'button',
               {
+                type: 'button',
                 onClick: () => {
                   close()
                   openSettingsModal(ui, gameId)
                 },
+                className: 'ap-btn',
                 style: {
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(56,189,248,0.4)',
-                  background: 'transparent',
-                  color: '#7dd3fc',
-                  cursor: 'pointer',
+                  border: '1px solid var(--ap-accent-border)',
+                  background: 'var(--ap-accent-soft)',
+                  color: 'var(--ap-accent)',
                 },
               },
               '⚙ 設定'
@@ -902,17 +1182,16 @@ window.__ModuleLoader__.load({
             h(
               'button',
               {
+                type: 'button',
                 onClick: async () => {
                   await ui.callHost('dsh-tavern-autoproof/proof', { gameId, turn }).catch(() => {})
                   close()
                 },
+                className: 'ap-btn ap-btn-primary',
                 style: {
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#10b981',
-                  color: '#fff',
-                  cursor: 'pointer',
+                  border: '1px solid var(--ap-accent)',
+                  background: 'var(--ap-accent)',
+                  color: 'var(--ap-accent-ink)',
                 },
               },
               '立即校對'
@@ -920,14 +1199,13 @@ window.__ModuleLoader__.load({
             h(
               'button',
               {
+                type: 'button',
                 onClick: close,
+                className: 'ap-btn',
                 style: {
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(148,163,184,0.35)',
+                  border: '1px solid var(--ap-border)',
                   background: 'transparent',
-                  color: 'inherit',
-                  cursor: 'pointer',
+                  color: 'var(--ap-ink)',
                 },
               },
               '關閉'
@@ -951,7 +1229,7 @@ window.__ModuleLoader__.load({
       const rows = [
         section('一、基本寫回與正文指標'),
         item('校對模式 / NSFW 分流', `${report.mode === 'conservative' ? '保守' : report.mode === 'aggressive' ? '積極' : '標準'} / ${nsfwLabel}`),
-        item('是否已寫回正文', writeStatus, report.writeOk ? '#6ee7b7' : undefined),
+        item('是否已寫回正文', writeStatus, report.reverted ? 'var(--ap-warn)' : report.writeOk ? 'var(--ap-good)' : undefined),
         item('正文字數 / 段落數', `${m.chars ?? 0} 字 / ${m.paragraphs ?? 0} 段`),
         item('對舉句式 / 每500字密度', `${m.antithesisCount ?? 0} 處（${m.antithesisDensityPer500 ?? 0}/500字）`),
         item('動作拆解 / 疊詞350字峰值', `${m.actionEchoCount ?? 0} 處 / ${m.maxRedupIn350 ?? 0} 處`),
@@ -962,20 +1240,75 @@ window.__ModuleLoader__.load({
         rows.push(item('雙向引號規範化', `已統一 ${report.quoteConverted} 處引號`))
       }
 
-      if ((report.charFixes || []).length > 0) {
-        rows.push(
-          item(
-            '第一層字級與詞組修復',
-            report.charFixes.map(x => `${x.from}→${x.to}×${x.count}`).join('、')
+      const fixes = report.charFixes || []
+      const totalFixCount = fixes.reduce((sum, x) => sum + (Number(x.count) || 0), 0)
+      if (fixes.length > 0) {
+        const fixesSummary = fixes.map(x => `${x.from}→${x.to}×${x.count}`).join('、')
+        if (fixes.length > 15 || totalFixCount > 25) {
+          rows.push(
+            h(
+              'details',
+              {
+                key: 'char-fixes-fold',
+                style: {
+                  padding: '6px 0',
+                  borderBottom: '1px solid var(--ap-border)',
+                  fontSize: '13px',
+                },
+              },
+              h(
+                'summary',
+                { style: { cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--ap-muted)' } },
+                h('span', null, '第一層字級與詞組修復'),
+                h('span', { style: { color: 'var(--ap-good)', fontSize: '12px', fontWeight: 600 } }, `共 ${fixes.length} 種 / ${totalFixCount} 次（展開明細 ▾）`)
+              ),
+              h(
+                'div',
+                {
+                  style: {
+                    marginTop: '6px',
+                    padding: '8px',
+                    borderRadius: 'var(--ap-radius-sm)',
+                    background: 'var(--ap-panel-soft)',
+                    border: '1px solid var(--ap-border)',
+                    fontSize: '12px',
+                    lineHeight: 1.55,
+                    color: 'var(--ap-ink)',
+                    wordBreak: 'break-all',
+                  },
+                },
+                fixesSummary
+              )
+            )
           )
-        )
+        } else {
+          rows.push(item('第一層字級與詞組修復', fixesSummary))
+        }
       }
       if (f && (f.preCleanedCount || 0) > 0) {
         rows.push(
           item(
             '無損廢話起手預清理（0 Token）',
             `已清 ${f.preCleanedCount} 處（${(f.preCleanedRemoved || []).slice(0, 3).join('、')}）`,
-            '#6ee7b7'
+            'var(--ap-good)'
+          )
+        )
+      }
+      if (f && ((f.metaLeakRemovedCount || 0) > 0 || (f.metaLeakDetectedCount || 0) > 0 || f.truncatedEnding)) {
+        const mlParts = []
+        if (f.metaLeakRemovedCount > 0) {
+          mlParts.push(`已清理 ${f.metaLeakRemovedCount} 條系統／字數殘留`)
+        } else if (f.metaLeakDetectedCount > 0) {
+          mlParts.push(`檢出 ${f.metaLeakDetectedCount} 條殘留（僅標記）`)
+        }
+        if (f.truncatedEnding) {
+          mlParts.push(`疑似截斷／未閉合引號（${f.truncatedSample || '結尾異常'}）`)
+        }
+        rows.push(
+          item(
+            '後設／系統元資料與截斷防護',
+            mlParts.join(' · '),
+            f.truncatedEnding ? 'var(--ap-bad)' : 'var(--ap-good)'
           )
         )
       }
@@ -989,12 +1322,16 @@ window.__ModuleLoader__.load({
           item(
             'AI 味綜合濃度評分',
             `${c.score} · ${lvlMap[c.level] || c.level}${dampNote} · 語氣詞 ${c.modalDensity}/千字`,
-            c.level === 'low' ? '#6ee7b7' : c.level === 'mid' ? '#fcd34d' : '#fca5a5'
+            c.level === 'low' ? 'var(--ap-good)' : c.level === 'mid' ? 'var(--ap-warn)' : 'var(--ap-bad)'
           )
         )
       }
-      if (f && f.modelFamily && f.modelFamily !== 'unknown') {
-        rows.push(item('模型家族指紋適配', `${f.modelFamily} · 破折號門檻 ${f.dashLimitApplied}/千字`))
+      if (f && (f.behaviorAdaptActive || (f.modelFamily && f.modelFamily !== 'unknown') || f.dashLimitApplied != null)) {
+        const bgNote = (f.modelFamily && f.modelFamily !== 'unknown') ? ` · 後台 ${f.modelFamily}` : ''
+        const adaptVal = f.behaviorAdaptActive
+          ? `近 3 輪自適應調整（${f.behaviorAdaptSummary || '已平衡'} · 破折號門檻 ${f.dashLimitApplied}/千字）`
+          : `基準監測中（破折號門檻 ${f.dashLimitApplied ?? 2}/千字${bgNote}）`
+        rows.push(item('純文字行為自適應', adaptVal, f.behaviorAdaptActive ? 'var(--ap-warn)' : undefined))
       }
 
       const lex = report.localAudit?.lexicon
@@ -1024,7 +1361,7 @@ window.__ModuleLoader__.load({
       if (f) {
         // 1. 正面文風卡
         let styleVal = '未啟用'
-        let styleColor = '#94a3b8'
+        let styleColor = 'var(--ap-muted)'
         if (f.styleCardEnabled) {
           if (f.styleCardChars > 0) {
             const apps = []
@@ -1034,21 +1371,21 @@ window.__ModuleLoader__.load({
               apps.push(report.tier2?.ran ? '已待命' : '本輪原文免修；下輪／重Roll生成會注入')
             }
             styleVal = `已啟用（${f.styleCardChars} 字）· ${apps.join(' ＋ ')}`
-            styleColor = (f.styleCardGenUsed || f.styleCardTier2Used) ? '#6ee7b7' : '#fcd34d'
+            styleColor = (f.styleCardGenUsed || f.styleCardTier2Used) ? 'var(--ap-good)' : 'var(--ap-warn)'
           } else {
             styleVal = '尚未設定內容（可至「正面文風 ✨」上傳小說萃取）'
-            styleColor = '#94a3b8'
+            styleColor = 'var(--ap-muted)'
           }
         }
         rows.push(item('正面文風錨點（Style Card）', styleVal, styleColor))
 
         // 1b. 寫作範例確定性輪轉
         let anchorVal = '未啟用'
-        let anchorColor = '#94a3b8'
+        let anchorColor = 'var(--ap-muted)'
         if (f.sampleAnchorsEnabled) {
           if ((f.sampleAnchorsTotal || 0) > 0) {
             anchorVal = `已收錄 ${f.sampleAnchorsTotal} 段 · ${f.sampleAnchorsGenUsed > 0 ? `生成前輪轉注入 ${f.sampleAnchorsGenUsed} 段` : '下輪／重Roll起輪轉注入'}`
-            anchorColor = f.sampleAnchorsGenUsed > 0 ? '#6ee7b7' : '#fcd34d'
+            anchorColor = f.sampleAnchorsGenUsed > 0 ? 'var(--ap-good)' : 'var(--ap-warn)'
           } else {
             anchorVal = '尚未設定（同人／小說卡上傳範文會自動挑段，原創卡可留白）'
           }
@@ -1057,16 +1394,16 @@ window.__ModuleLoader__.load({
 
         // 1c. 多角色語言基因卡
         let voiceVal = '未設定'
-        let voiceColor = '#94a3b8'
+        let voiceColor = 'var(--ap-muted)'
         if ((f.voiceProfileCount || 0) > 0) {
           const vParts = [`監控 ${f.voiceProfileCount} 位角色`]
           if (f.voiceGenUsed > 0) vParts.push('生成前已注入')
           if ((f.voiceTabooHits || []).length > 0) {
             vParts.push(`誤觸禁忌：${f.voiceTabooHits.map(x => `${x.name}(${x.phrase})`).join('、')}`)
-            voiceColor = '#fca5a5'
+            voiceColor = 'var(--ap-bad)'
           } else {
             vParts.push('未誤觸禁忌詞')
-            voiceColor = '#6ee7b7'
+            voiceColor = 'var(--ap-good)'
           }
           if ((f.voiceTicsMissing || []).length > 0) {
             vParts.push(`口癖提醒：${f.voiceTicsMissing.join('、')}`)
@@ -1082,7 +1419,7 @@ window.__ModuleLoader__.load({
             (f.whitelistRuleCount || 0) > 0
               ? `已登記 ${f.whitelistRuleCount} 條（本輪掃描豁免 ${f.whitelistMaskedChars || 0} 字）`
               : '未登記（所有寫法皆參與掃描）',
-            (f.whitelistMaskedChars || 0) > 0 ? '#6ee7b7' : '#94a3b8'
+            (f.whitelistMaskedChars || 0) > 0 ? 'var(--ap-good)' : 'var(--ap-muted)'
           )
         )
 
@@ -1091,19 +1428,19 @@ window.__ModuleLoader__.load({
           item(
             'Verbalized Sampling（破套路）',
             f.verbalizedSampling ? '已開啟（於主模型生成前引導思考區多路取樣）' : '未開啟（預設關閉）',
-            f.verbalizedSampling ? '#6ee7b7' : '#94a3b8'
+            f.verbalizedSampling ? 'var(--ap-good)' : 'var(--ap-muted)'
           )
         )
 
         // 3. 實體專有名詞鎖
         let entityVal = '已關閉'
-        let entityColor = '#94a3b8'
+        let entityColor = 'var(--ap-muted)'
         if (f.entityLockMode !== 'off') {
           const scope = `監控 ${f.entityLockRuleCount} 條（自訂 ${f.entityLockCustomCount} / 卡面 ${f.entityLockCardCount}）`
           if (f.entityLockTotal > 0) {
             const detail = (f.entityLockDetail || []).map(x => `${x.from}→${x.to}×${x.count}`).join('、')
             entityVal = `已訂正 ${f.entityLockTotal} 處（${detail}）｜${scope}`
-            entityColor = '#6ee7b7'
+            entityColor = 'var(--ap-good)'
           } else {
             entityVal = `${scope} · 本輪無專名詞錯寫`
           }
@@ -1113,14 +1450,14 @@ window.__ModuleLoader__.load({
         // 4. 知而不言邊界
         const ugLabels = { off: '關閉', report: '僅標記', adaptive: '自適應', always: '每輪注入' }
         let ugVal = '關閉'
-        let ugColor = '#94a3b8'
+        let ugColor = 'var(--ap-muted)'
         if (f.utteranceGateMode !== 'off') {
           const modeTxt = ugLabels[f.utteranceGateMode] || f.utteranceGateMode
           const genTxt = f.utteranceGateGenInjected ? '（生成前已注入）' : ''
           if (f.infoDumpCount > 0) {
             const samp = (f.infoDumpSamples || []).slice(0, 1).join('')
             ugVal = `${modeTxt}${genTxt} · 檢出 ${f.infoDumpCount} 處科普${samp ? `（${samp}）` : ''}`
-            ugColor = '#fcd34d'
+            ugColor = 'var(--ap-warn)'
           } else {
             ugVal = `${modeTxt}${genTxt} · 本輪台詞自然（未見設定科普）`
           }
@@ -1134,7 +1471,7 @@ window.__ModuleLoader__.load({
         const cdParts = [cdMode]
         cdParts.push(turnActions ? `本輪命中：${turnActions}` : '本輪未見高頻動作套詞')
         if (cdInjected) cdParts.push(`冷卻中：${cdInjected}`)
-        rows.push(item('跨輪高頻動作冷卻池', cdParts.join(' · '), cdInjected ? '#fcd34d' : undefined))
+        rows.push(item('跨輪高頻動作冷卻池', cdParts.join(' · '), cdInjected ? 'var(--ap-warn)' : undefined))
 
         const turnStruct = fmtFlags(f.turnStructuralFlags || [])
         const recurStruct = fmtFlags(f.structuralRecurring || [])
@@ -1142,7 +1479,15 @@ window.__ModuleLoader__.load({
         const nsParts = [nsMode]
         nsParts.push(turnStruct ? `本輪檢出：${turnStruct}` : '本輪結構正常')
         if (recurStruct) nsParts.push(`跨輪提醒中：${recurStruct}`)
-        rows.push(item('敘事結構指紋（StoryScope）', nsParts.join(' · '), recurStruct ? '#fcd34d' : undefined))
+        rows.push(item('敘事結構指紋（StoryScope）', nsParts.join(' · '), recurStruct ? 'var(--ap-warn)' : undefined))
+
+        if (f.openingKind) {
+          const openMap = { dialogue: '對白破題', weather_time: '景物／時間起手', character_micro: '人物微動作起手', action: '動作切入', other: '一般敘事' }
+          const openTxt = f.openingMonotony
+            ? `${openMap[f.openingKind] || f.openingKind} · ⚠️ 連 3 輪相同開場`
+            : (openMap[f.openingKind] || f.openingKind)
+          rows.push(item('本輪開場類型', openTxt, f.openingMonotony ? 'var(--ap-warn)' : undefined))
+        }
 
         // 6. 碎句／稀釋／語病補充掃描
         const deepNotes = []
@@ -1156,7 +1501,7 @@ window.__ModuleLoader__.load({
           deepNotes.push(`言說賓語語病 ${f.speechObjDefectsCount} 處`)
         }
         if (deepNotes.length > 0) {
-          rows.push(item('深度稀釋與語病掃描', deepNotes.join(' · '), (f.speechObjDefectsCount || 0) > 0 ? '#fcd34d' : undefined))
+          rows.push(item('深度稀釋與語病掃描', deepNotes.join(' · '), (f.speechObjDefectsCount || 0) > 0 ? 'var(--ap-warn)' : undefined))
         }
         const extraDiag = []
         if ((f.isomorphicPairs || 0) > 0 || (f.isomorphicTriples || 0) > 0) {
@@ -1173,7 +1518,7 @@ window.__ModuleLoader__.load({
         }
         if ((f.addressWarnings || []).length > 0) {
           const aw = f.addressWarnings.map(w => `${w.baseName}（${Object.entries(w.counts).map(([k, v]) => `${k}×${v}`).join('/')}）`).join('；')
-          rows.push(item('稱謂變體混用提醒', aw, '#fcd34d'))
+          rows.push(item('稱謂變體混用提醒', aw, 'var(--ap-warn)'))
         }
       } else {
         // 兼容舊版歷史報告
@@ -1204,7 +1549,7 @@ window.__ModuleLoader__.load({
           : pdMode === 'strict'
             ? `嚴格跳過（已完全保護 ${report.dialogueProtectedCount || 0} 段對白）`
             : `智能放行（已護短口癖 ${report.dialogueProtectedCount || 0} 段 · 放行 AI 腔對白送修 ${f.dialogueReleasedCount || 0} 段）`
-        rows.push(item('對話與口癖保護區', pdTxt, (f.dialogueReleasedCount || 0) > 0 ? '#6ee7b7' : undefined))
+        rows.push(item('對話與口癖保護區', pdTxt, (f.dialogueReleasedCount || 0) > 0 ? 'var(--ap-good)' : undefined))
       } else if (report.dialogueProtectedCount > 0) {
         rows.push(item('對話口癖保護區', `已跳過 ${report.dialogueProtectedCount} 段`))
       }
@@ -1218,6 +1563,9 @@ window.__ModuleLoader__.load({
         const extraGuardInfo = [
           report.tier2.dedupReverted ? `跨段去重退回 ${report.tier2.dedupReverted} 段` : '',
           report.tier2.deletionGuardTripped ? '已觸發刪減比例護欄' : '',
+          (report.tier2.batchCalls || 0) > 0 ? `批次合併 ${report.tier2.batchCalls} 次` : '',
+          (report.tier2.fallbackSingles || 0) > 0 ? `單段兜底 ${report.tier2.fallbackSingles} 段` : '',
+          (report.tier2.skippedLowSignal || 0) > 0 ? `略過低訊號 ${report.tier2.skippedLowSignal} 段` : '',
         ].filter(Boolean).join('、')
         rows.push(
           item(
@@ -1225,7 +1573,7 @@ window.__ModuleLoader__.load({
             report.tier2.error
               ? `異常：${report.tier2.error}`
               : `完成（處理 ${report.tier2.segments} 段${guardInfo}${bonInfo}${retryInfo}${extraGuardInfo ? `，${extraGuardInfo}` : ''}）`,
-            report.tier2.error ? '#fca5a5' : '#6ee7b7'
+            report.tier2.error ? 'var(--ap-bad)' : 'var(--ap-good)'
           )
         )
         rows.push(
@@ -1254,6 +1602,7 @@ window.__ModuleLoader__.load({
           'no-issues': '未觸發（本輪未命中需改寫問題，保留原文）',
           'too-short': '未觸發（本輪正文過短，不送交改寫）',
           'local-only': '純本地模式（僅執行本地確定性微修）',
+          'low-signal-filtered': `略過 ${report.tier2?.skippedLowSignal || 0} 段低訊號段（無確診病灶，節省 100% Tier 2 Token）`,
           'all-filtered': '全部命中段均受對話保護或留守本地，未送線上模型',
         }
         rows.push(item('第二層局部校對狀態', skipMap[report.tier2?.skipReason] || '本輪未啟動 Tier 2'))
@@ -1269,35 +1618,261 @@ window.__ModuleLoader__.load({
         ? '觀察到的候選／指標（不代表每項都會改寫）：' + report.violations.map(v => v.label).join('；')
         : '沒有觀察到候選問題。'
 
+      const renderConcentrationCard = () => {
+        const c = f?.concentration || null
+        const score = c ? Math.max(0, Math.min(1, Number(c.score) || 0)) : 0
+        const lvl = c?.level || 'low'
+        const lvlMap = { low: '低（自然真人筆感）', mid: '中（有模板痕跡）', high: '高（明顯 AI 味）', severe: '極高（建議重校）' }
+        const ringColor = lvl === 'low' ? 'var(--ap-good)' : lvl === 'mid' ? 'var(--ap-warn)' : 'var(--ap-bad)'
+        const radius = 24
+        const circ = 2 * Math.PI * radius
+        const dashOffset = circ * (1 - score)
+        const subDesc = c
+          ? `具體細節/口語抵銷 (${c.anchorHits || 0}/${c.imperfectionHits || 0}) · 語氣詞 ${c.modalDensity ?? 0}/千字`
+          : `第 ${turn} 輪校對完成 · ${report.writeOk ? '已寫回正文' : '保留原文'}`
+        const pills = []
+        if ((report.tier2?.batchCalls || 0) > 0) pills.push(`${report.tier2.batchCalls} 批合併`)
+        if ((report.tier2?.skippedLowSignal || 0) > 0) pills.push(`略過空轉 ${report.tier2.skippedLowSignal} 段`)
+        if ((f?.metaLeakRemovedCount || 0) > 0) pills.push(`清理出戲行 ${f.metaLeakRemovedCount}`)
+        if (report.reverted) pills.push('已還原鎖定')
+        else if (report.canUndo) pills.push('可一鍵還原')
+
+        return h(
+          'div',
+          {
+            style: {
+              padding: '12px 14px',
+              borderRadius: 'var(--ap-radius-md)',
+              background: 'var(--ap-panel)',
+              border: '1px solid var(--ap-border)',
+              marginBottom: '10px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            },
+          },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: '1 1 240px' } },
+            c
+              ? h(
+                  'div',
+                  { style: { position: 'relative', width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } },
+                  h(
+                    'svg',
+                    { width: 56, height: 56, viewBox: '0 0 56 56', style: { transform: 'rotate(-90deg)' } },
+                    h('circle', { cx: 28, cy: 28, r: radius, fill: 'none', stroke: 'var(--ap-border)', strokeWidth: 5 }),
+                    h('circle', {
+                      cx: 28,
+                      cy: 28,
+                      r: radius,
+                      fill: 'none',
+                      stroke: ringColor,
+                      strokeWidth: 5,
+                      strokeLinecap: 'round',
+                      strokeDasharray: circ.toFixed(1),
+                      strokeDashoffset: dashOffset.toFixed(1),
+                      style: { transition: 'stroke-dashoffset 0.55s ease-out' },
+                    })
+                  ),
+                  h(
+                    'span',
+                    { style: { position: 'absolute', fontSize: '12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: ringColor } },
+                    score.toFixed(2)
+                  )
+                )
+              : null,
+            h(
+              'div',
+              { style: { minWidth: 0 } },
+              h(
+                'div',
+                { style: { fontSize: '13px', fontWeight: 700, color: c ? ringColor : 'var(--ap-ink)' } },
+                c ? `AI 味綜合濃度：${lvlMap[lvl] || lvl}` : '校對摘要'
+              ),
+              h('div', { style: { fontSize: '11px', color: 'var(--ap-muted)', marginTop: '3px', lineHeight: 1.45 } }, subDesc)
+            )
+          ),
+          pills.length
+            ? h(
+                'div',
+                { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+                ...pills.map((txt, idx) =>
+                  h(
+                    'span',
+                    {
+                      key: `pill-${idx}`,
+                      style: {
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        padding: '3px 8px',
+                        borderRadius: '999px',
+                        background: idx === pills.length - 1 && report.reverted ? 'var(--ap-warn-soft)' : 'var(--ap-accent-soft)',
+                        color: idx === pills.length - 1 && report.reverted ? 'var(--ap-warn)' : 'var(--ap-accent)',
+                        border: idx === pills.length - 1 && report.reverted ? '1px solid var(--ap-warn-border)' : '1px solid var(--ap-accent-border)',
+                      },
+                    },
+                    txt
+                  )
+                )
+              )
+            : null
+        )
+      }
+
+      const statusPillText = report.reverted
+        ? '已還原原文並鎖定'
+        : report.writeOk
+          ? '已精修寫回'
+          : report.edited
+            ? '未寫回／僅分析'
+            : '原文保留'
+      const statusPillColor = report.reverted ? 'var(--ap-warn)' : report.writeOk ? 'var(--ap-good)' : 'var(--ap-muted)'
+      const statusPillBg = report.reverted ? 'var(--ap-warn-soft)' : report.writeOk ? 'var(--ap-good-soft)' : 'var(--ap-panel)'
+      const statusPillBorder = report.reverted ? 'var(--ap-warn-border)' : report.writeOk ? 'var(--ap-good-border)' : 'var(--ap-border)'
+
       return h(
         'div',
         {
+          className: 'ap-modal ap-scroll',
           style: {
-            width: 'min(600px, calc(100vw - 24px))',
+            width: 'min(620px, calc(100vw - 24px))',
             maxWidth: '100%',
-            boxSizing: 'border-box',
             margin: '16px auto',
             padding: '16px',
-            borderRadius: '12px',
-            background: 'var(--gal-ui-surface, #1e293b)',
-            color: 'var(--gal-ui-ink, #f8fafc)',
-            boxShadow: '0 20px 45px rgba(0,0,0,0.45)',
             maxHeight: '88vh',
             overflowY: 'auto',
           },
         },
-        h('h3', { style: { margin: '0 0 8px', fontSize: '16px' } }, `AutoProof v1.37 校對報告（第 ${turn} 輪）`),
+        h(
+          'div',
+          { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px', paddingBottom: '12px', marginBottom: '12px', borderBottom: '1px solid var(--ap-border)' } },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 } },
+            renderBrandLogo(36),
+            h(
+              'div',
+              { style: { minWidth: 0 } },
+              h('h3', { className: 'ap-title', style: { fontSize: '15px' } }, `澄文 · AutoProof v1.38 校對報告`),
+              h('div', { className: 'ap-sub' }, `第 ${turn} 輪 · 配色與字體自動跟隨酒館皮膚`)
+            )
+          ),
+          h(
+            'span',
+            {
+              style: {
+                fontSize: '11px',
+                fontWeight: 600,
+                padding: '3px 9px',
+                borderRadius: '999px',
+                background: statusPillBg,
+                color: statusPillColor,
+                border: `1px solid ${statusPillBorder}`,
+                whiteSpace: 'nowrap',
+              },
+            },
+            `第 ${turn} 輪 · ${statusPillText}`
+          )
+        ),
+        renderConcentrationCard(),
         h('div', null, ...rows),
+        Array.isArray(report.diffs) && report.diffs.length > 0
+          ? h(
+              'details',
+              {
+                style: {
+                  marginTop: '12px',
+                  borderRadius: 'var(--ap-radius-md)',
+                  background: 'var(--ap-panel-soft)',
+                  border: '1px solid var(--ap-accent-border)',
+                  overflow: 'hidden',
+                  fontSize: '12px',
+                },
+              },
+              h(
+                'summary',
+                {
+                  style: {
+                    cursor: 'pointer',
+                    padding: '9px 12px',
+                    background: 'var(--ap-accent-soft)',
+                    color: 'var(--ap-accent)',
+                    fontWeight: 600,
+                  },
+                },
+                `📝 本輪實質改動明細（共 ${report.diffs.length} 段，點擊展開改前／改後對比）`
+              ),
+              h(
+                'div',
+                { className: 'ap-scroll', style: { padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' } },
+                ...report.diffs.map((d, dIdx) =>
+                  h(
+                    'div',
+                    {
+                      key: `diff-${dIdx}-${d.index}`,
+                      style: {
+                        padding: '8px 10px',
+                        borderRadius: 'var(--ap-radius-sm)',
+                        background: 'var(--ap-panel)',
+                        border: '1px solid var(--ap-border)',
+                        lineHeight: 1.5,
+                      },
+                    },
+                    h(
+                      'div',
+                      { style: { color: 'var(--ap-muted)', marginBottom: '5px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px' } },
+                      h('span', { style: { fontWeight: 600 } }, `第 ${Number(d.index) + 1} 行`),
+                      Array.isArray(d.reasons) && d.reasons.length
+                        ? h('span', { style: { color: 'var(--ap-accent)' } }, d.reasons.join(' / '))
+                        : null
+                    ),
+                    h(
+                      'div',
+                      { style: { padding: '5px 7px', borderRadius: 'var(--ap-radius-sm)', background: 'var(--ap-bad-soft)', border: '1px solid var(--ap-bad-border)', color: 'var(--ap-bad)', marginBottom: '4px', whiteSpace: 'pre-wrap' } },
+                      `改前：${d.before || '（空）'}`
+                    ),
+                    h(
+                      'div',
+                      { style: { padding: '5px 7px', borderRadius: 'var(--ap-radius-sm)', background: 'var(--ap-good-soft)', border: '1px solid var(--ap-good-border)', color: 'var(--ap-good)', whiteSpace: 'pre-wrap' } },
+                      `改後：${d.after || '（已整行清理）'}`
+                    )
+                  )
+                )
+              )
+            )
+          : null,
+        undoError
+          ? h(
+              'p',
+              {
+                style: {
+                  marginTop: '10px',
+                  padding: '9px 10px',
+                  borderRadius: 'var(--ap-radius-sm)',
+                  background: 'var(--ap-bad-soft)',
+                  border: '1px solid var(--ap-bad-border)',
+                  color: 'var(--ap-bad)',
+                  fontSize: '12px',
+                  lineHeight: 1.5,
+                },
+              },
+              '還原失敗：' + undoError
+            )
+          : null,
         report.writeError
           ? h(
               'p',
               {
                 style: {
                   marginTop: '10px',
-                  padding: '10px',
-                  borderRadius: '8px',
-                  background: 'rgba(239, 68, 68, 0.16)',
-                  color: '#fca5a5',
+                  padding: '9px 10px',
+                  borderRadius: 'var(--ap-radius-sm)',
+                  background: 'var(--ap-bad-soft)',
+                  border: '1px solid var(--ap-bad-border)',
+                  color: 'var(--ap-bad)',
                   fontSize: '12px',
                   lineHeight: 1.5,
                 },
@@ -1311,10 +1886,11 @@ window.__ModuleLoader__.load({
               {
                 style: {
                   marginTop: '10px',
-                  padding: '10px',
-                  borderRadius: '8px',
-                  background: 'rgba(245, 158, 11, 0.14)',
-                  color: '#fcd34d',
+                  padding: '9px 10px',
+                  borderRadius: 'var(--ap-radius-sm)',
+                  background: 'var(--ap-warn-soft)',
+                  border: '1px solid var(--ap-warn-border)',
+                  color: 'var(--ap-warn)',
                   fontSize: '12px',
                   lineHeight: 1.5,
                 },
@@ -1328,8 +1904,10 @@ window.__ModuleLoader__.load({
             style: {
               marginTop: '12px',
               padding: '10px',
-              borderRadius: '8px',
-              background: 'rgba(15, 23, 42, 0.45)',
+              borderRadius: 'var(--ap-radius-sm)',
+              background: 'var(--ap-panel-soft)',
+              border: '1px solid var(--ap-border)',
+              color: 'var(--ap-muted)',
               fontSize: '12px',
               lineHeight: 1.6,
             },
@@ -1338,31 +1916,67 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { display: 'flex', gap: '8px', justifyContent: 'space-between', marginTop: '16px' } },
+          { style: { display: 'flex', gap: '8px', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--ap-border)', flexWrap: 'wrap' } },
           h(
             'button',
             {
+              type: 'button',
               onClick: () => {
                 close()
                 openSettingsModal(ui, gameId)
               },
+              className: 'ap-btn',
               style: {
-                padding: '6px 12px',
-                borderRadius: '6px',
-                border: '1px solid rgba(56,189,248,0.45)',
-                background: 'rgba(56,189,248,0.12)',
-                color: '#7dd3fc',
-                cursor: 'pointer',
+                border: '1px solid var(--ap-accent-border)',
+                background: 'var(--ap-accent-soft)',
+                color: 'var(--ap-accent)',
               },
             },
             '⚙ 功能設定'
           ),
           h(
             'div',
-            { style: { display: 'flex', gap: '8px' } },
+            { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+            (report.canUndo && !report.reverted)
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    disabled: undoBusy,
+                    className: 'ap-btn',
+                    onClick: async () => {
+                      if (undoBusy) return
+                      setUndoBusy(true)
+                      setUndoError('')
+                      try {
+                        const res = await ui.callHost('dsh-tavern-autoproof/undo', { gameId, turn })
+                        if (res && res.ok && res.report) {
+                          setReport({ ...res.report })
+                        } else if (res && res.ok) {
+                          setReport(prev => ({ ...prev, reverted: true, canUndo: false, note: '已手動一鍵還原原文（已鎖定，非手動「重新校對」不再自動改寫）' }))
+                        } else {
+                          setUndoError((res && res.error) || '還原失敗')
+                        }
+                      } catch (e) {
+                        setUndoError(String((e && e.message) || e).slice(0, 140))
+                      } finally {
+                        setUndoBusy(false)
+                      }
+                    },
+                    style: {
+                      border: '1px solid var(--ap-warn-border)',
+                      background: 'var(--ap-warn-soft)',
+                      color: 'var(--ap-warn)',
+                    },
+                  },
+                  undoBusy ? '還原中…' : '↩ 一鍵還原原文'
+                )
+              : null,
             h(
               'button',
               {
+                type: 'button',
+                className: 'ap-btn ap-btn-primary',
                 onClick: async () => {
                   try {
                     close()
@@ -1376,12 +1990,9 @@ window.__ModuleLoader__.load({
                   }
                 },
                 style: {
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#10b981',
-                  color: '#fff',
-                  cursor: 'pointer',
+                  border: '1px solid var(--ap-accent)',
+                  background: 'var(--ap-accent)',
+                  color: 'var(--ap-accent-ink)',
                 },
               },
               '重新校對本輪'
@@ -1389,14 +2000,13 @@ window.__ModuleLoader__.load({
             h(
               'button',
               {
+                type: 'button',
                 onClick: close,
+                className: 'ap-btn',
                 style: {
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(148,163,184,0.35)',
+                  border: '1px solid var(--ap-border)',
                   background: 'transparent',
-                  color: 'inherit',
-                  cursor: 'pointer',
+                  color: 'var(--ap-ink)',
                 },
               },
               '關閉'
@@ -1412,6 +2022,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         try {
           if (!ctx || !ctx.tavernUi) return
+          ensureAutoProofStyles()
           const ui = ctx.tavernUi
 
           try {
